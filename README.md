@@ -4,10 +4,11 @@ Mobile-first, manual race timing for up to 20 athletes who start together.
 
 ## Current status
 
-The app ships with **single-phone practice** enabled. The Firebase adapter and
-database rules are supplied, but no Firebase project is configured by default.
-The app must NOT be described as live multi-device timing until a real shared
-project is connected, the rules are deployed, and an actual multi-phone test passes.
+The published app includes the public Web configuration for the SplitLine
+Firebase project. Coaches do not need to enter connection settings on each phone.
+Anonymous Authentication and the supplied database rules must be enabled in that
+project. Single-phone practice is also available. Test a shared race on two actual
+phones before using the app for a team race.
 
 ## Publish on GitHub Pages
 

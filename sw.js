@@ -1,4 +1,4 @@
-const CACHE = 'splitline-v1';
+const CACHE = 'splitline-v2';
 const FILES = ['./', './index.html', './style.css', './app.mjs', './core.mjs', './backend.mjs', './firebase-config.mjs', './icon.svg', './manifest.webmanifest'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES))));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('splitline-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
