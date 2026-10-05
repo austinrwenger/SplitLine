@@ -1,0 +1,102 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "clock": {
+      "$uid": {
+        ".read": "auth !== null && auth.uid === $uid",
+        ".write": "auth !== null && auth.uid === $uid && newData.hasChildren(['at'])",
+        "at": { ".validate": "newData.isNumber() && newData.val() === now" },
+        "$other": { ".validate": false }
+      }
+    },
+    "races": {
+      "$race": {
+        ".read": "auth !== null && data.child('members').child(auth.uid).exists()",
+        ".write": "auth !== null && !data.exists() && newData.child('owner').val() === auth.uid && newData.child('state/status').val() === 'ready' && newData.child('members').child(auth.uid).exists() && !newData.child('events').exists() && !newData.child('voids').exists()",
+        ".validate": "newData.hasChildren(['owner','invite','meta','athletes','checkpoints','state','members']) && (!data.exists() || newData.child('owner').val() === data.child('owner').val())",
+        "owner": { ".validate": "newData.isString() && (!data.exists() || newData.val() === data.val())" },
+        "invite": { ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)" },
+        "meta": {
+          ".validate": "newData.hasChildren(['name','createdAt'])",
+          "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60" },
+          "createdAt": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 60000" },
+          "$other": { ".validate": false }
+        },
+        "athletes": {
+          ".validate": "newData.hasChildren(['a1'])",
+          "$athlete": {
+            ".validate": "$athlete.matches(/^a([1-9]|1[0-9]|20)$/) && newData.hasChildren(['bib','name','order'])",
+            "bib": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+            "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60" },
+            "order": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 20" },
+            "$other": { ".validate": false }
+          }
+        },
+        "checkpoints": {
+          ".validate": "newData.hasChildren(['c1'])",
+          "$checkpoint": {
+            ".validate": "$checkpoint.matches(/^c([1-9]|1[0-2])$/) && newData.hasChildren(['label','order','finish'])",
+            "label": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40" },
+            "order": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 12" },
+            "finish": { ".validate": "newData.isBoolean()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "state": {
+          ".write": "auth !== null && data.parent().child('owner').val() === auth.uid && ((data.child('status').val() === 'ready' && newData.child('status').val() === 'running' && newData.child('startedAt').val() >= now - 30000 && newData.child('startedAt').val() <= now + 15000 && newData.child('endedAt').val() === 0) || (data.child('status').val() === 'running' && newData.child('status').val() === 'finished' && newData.child('startedAt').val() === data.child('startedAt').val() && newData.child('endedAt').val() >= data.child('startedAt').val() && newData.child('endedAt').val() <= now + 30000))",
+          ".validate": "newData.hasChildren(['status','startedAt','endedAt']) && (newData.child('status').val() !== 'ready' || (newData.child('startedAt').val() === 0 && newData.child('endedAt').val() === 0))",
+          "status": { ".validate": "newData.val() === 'ready' || newData.val() === 'running' || newData.val() === 'finished'" },
+          "startedAt": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "endedAt": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "$other": { ".validate": false }
+        },
+        "members": {
+          "$uid": {
+            ".write": "auth !== null && auth.uid === $uid && data.parent().parent().exists() && newData.child('invite').val() === data.parent().parent().child('invite').val() && newData.hasChildren(['name','invite'])",
+            ".validate": "newData.hasChildren(['name','invite']) && newData.child('invite').val() === newData.parent().parent().child('invite').val()",
+            "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40" },
+            "invite": { ".validate": "newData.isString()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "presence": {
+          "$uid": {
+            ".write": "auth !== null && auth.uid === $uid && data.parent().parent().child('members').child(auth.uid).exists() && newData.hasChildren(['name','checkpointId','clockReady','online','seenAt'])",
+            ".validate": "newData.hasChildren(['name','checkpointId','clockReady','online','seenAt'])",
+            "name": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "checkpointId": { ".validate": "newData.isString() && root.child('races').child($race).child('checkpoints').child(newData.val()).exists()" },
+            "clockReady": { ".validate": "newData.isBoolean()" },
+            "online": { ".validate": "newData.isBoolean()" },
+            "seenAt": { ".validate": "newData.isNumber() && newData.val() === now" },
+            "$other": { ".validate": false }
+          }
+        },
+        "events": {
+          "$event": {
+            ".write": "auth !== null && !data.exists() && root.child('races').child($race).child('members').child(auth.uid).exists() && newData.child('coachId').val() === auth.uid && root.child('races').child($race).child('state/status').val() !== 'ready'",
+            ".validate": "newData.hasChildren(['athleteId','checkpointId','elapsedMs','capturedAt','coachId','coachName','clockQuality']) && newData.child('capturedAt').val() - root.child('races').child($race).child('state/startedAt').val() === newData.child('elapsedMs').val() && (root.child('races').child($race).child('state/status').val() !== 'finished' || newData.child('capturedAt').val() <= root.child('races').child($race).child('state/endedAt').val() + 5000)",
+            "athleteId": { ".validate": "newData.isString() && root.child('races').child($race).child('athletes').child(newData.val()).exists()" },
+            "checkpointId": { ".validate": "newData.isString() && root.child('races').child($race).child('checkpoints').child(newData.val()).exists()" },
+            "elapsedMs": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 86400000" },
+            "capturedAt": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 30000" },
+            "coachId": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+            "coachName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40" },
+            "clockQuality": { ".validate": "newData.val() === 'synced' || newData.val() === 'cached'" },
+            "$other": { ".validate": false }
+          }
+        },
+        "voids": {
+          "$event": {
+            ".write": "auth !== null && !data.exists() && root.child('races').child($race).child('members').child(auth.uid).exists() && root.child('races').child($race).child('events').child($event).exists() && (root.child('races').child($race).child('events').child($event).child('coachId').val() === auth.uid || root.child('races').child($race).child('owner').val() === auth.uid)",
+            ".validate": "newData.hasChildren(['coachId','at'])",
+            "coachId": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+            "at": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 30000" },
+            "$other": { ".validate": false }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

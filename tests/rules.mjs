@@ -1,0 +1,54 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {createRequire} from 'node:module';
+import {parseRoster,parseCheckpoints} from '../core.mjs';
+const require=createRequire(import.meta.url);
+const root=process.env.SPLITLINE_TEST_MODULES;
+const load=name=>require(root ? require.resolve(name,{paths:[root]}) : name);
+const {initializeTestEnvironment,assertSucceeds,assertFails}=load('@firebase/rules-unit-testing');
+// The emulator is local; Firebase's Node WebSocket client otherwise proxies even
+// loopback addresses when HTTP_PROXY is set (it ignores NO_PROXY).
+delete process.env.HTTP_PROXY;
+delete process.env.http_proxy;
+const env=await initializeTestEnvironment({projectId:'demo-splitline',database:{host:'127.0.0.1',port:9000,rules:await fs.readFile(path.resolve(import.meta.dirname,'../database.rules.json'),'utf8')}});
+const db=id=>env.authenticatedContext(id).database();
+const host=db('host'),coach=db('coach'),stranger=db('stranger'),guest=env.unauthenticatedContext().database();
+const id='0123456789abcdef',token='a'.repeat(32),base=`races/${id}`;
+const race={owner:'host',invite:token,meta:{name:'Test race',createdAt:Date.now()},athletes:parseRoster('12, Alex\n24, Jordan'),checkpoints:parseCheckpoints('Mile 1\nFinish'),state:{status:'ready',startedAt:0,endedAt:0},members:{host:{name:'Starter',invite:token}}};
+const ok=async(label,promise)=>{await assertSucceeds(promise);console.log('PASS '+label);};
+const denied=async(label,promise)=>{await assertFails(promise);console.log('PASS denied '+label);};
+try{
+  await env.clearDatabase();
+  await ok('creator can create race',host.ref(base).set(race));
+  await denied('root race listing',host.ref('races').once('value'));
+  await denied('unauthenticated read',guest.ref(base).once('value'));
+  await denied('nonmember read',stranger.ref(base).once('value'));
+  await denied('wrong invite',coach.ref(base+'/members/coach').set({name:'Mile Coach',invite:'b'.repeat(32)}));
+  await ok('private invite grants membership',coach.ref(base+'/members/coach').set({name:'Mile Coach',invite:token}));
+  await ok('member reads race',coach.ref(base).once('value'));
+  const startedAt=Date.now()+2000;
+  const state={status:'running',startedAt,endedAt:0};
+  await denied('coach cannot start',coach.ref(base+'/state').set(state));
+  await denied('host cannot transfer ownership',host.ref(base+'/owner').set('coach'));
+  await ok('creator starts race',host.ref(base+'/state').set(state));
+  await denied('creator cannot reset race',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0}));
+  const e={athleteId:'a1',checkpointId:'c1',elapsedMs:1000,capturedAt:startedAt+1000,coachId:'coach',coachName:'Mile Coach',clockQuality:'synced'};
+  await ok('member creates valid split',coach.ref(base+'/events/e1').set(e));
+  await denied('member cannot overwrite split',coach.ref(base+'/events/e1').set({...e,elapsedMs:2000}));
+  await denied('member cannot delete split',coach.ref(base+'/events/e1').remove());
+  await denied('member cannot impersonate coach',coach.ref(base+'/events/e2').set({...e,coachId:'host'}));
+  await denied('unknown athlete',coach.ref(base+'/events/e2').set({...e,athleteId:'a20'}));
+  await denied('unknown checkpoint',coach.ref(base+'/events/e2').set({...e,checkpointId:'c12'}));
+  await denied('mismatched elapsed time',coach.ref(base+'/events/e2').set({...e,elapsedMs:9}));
+  await denied('negative elapsed time',coach.ref(base+'/events/e2').set({...e,elapsedMs:-10,capturedAt:startedAt-10}));
+  await denied('stranger cannot undo',stranger.ref(base+'/voids/e1').set({coachId:'stranger',at:Date.now()}));
+  await ok('recorder undoes own split',coach.ref(base+'/voids/e1').set({coachId:'coach',at:Date.now()}));
+  await ok('member can record another split',coach.ref(base+'/events/e2').set(e));
+  await ok('starter can undo another coach split',host.ref(base+'/voids/e2').set({coachId:'host',at:Date.now()}));
+  const endedAt=startedAt+5000;
+  await ok('creator ends race',host.ref(base+'/state').set({status:'finished',startedAt,endedAt}));
+  await ok('previously captured offline event may upload after finish',coach.ref(base+'/events/e3').set({...e,clockQuality:'cached'}));
+  await denied('new capture far after finish',coach.ref(base+'/events/e4').set({...e,capturedAt:endedAt+6000,elapsedMs:11000}));
+  await denied('cannot erase race',host.ref(base).remove());
+  console.log('ALL Firebase emulator security checks passed');
+}finally{await env.cleanup();}
