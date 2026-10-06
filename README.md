@@ -10,6 +10,13 @@ Anonymous Authentication and the supplied database rules must be enabled in that
 project. Single-phone practice is also available. Test a shared race on two actual
 phones before using the app for a team race.
 
+**False-start resets require the updated `database.rules.json` in Firebase.**
+The app remains compatible with the previously published rules for creating,
+starting, timing, and ending a first attempt. To enable a reset for a shared
+race, open Firebase Console → Realtime Database → Rules, replace the editor
+with this repository's current `database.rules.json`, and publish it. Do this
+when no race is in progress.
+
 ## Publish on GitHub Pages
 
 In this repository, open **Settings → Pages**. Choose **Deploy from a branch**,
@@ -48,9 +55,11 @@ below to enable live sharing across phones.
    passwords, service-account JSON, private keys, or admin credentials.** Access
    is enforced by the database rules and authenticated coach identities.
 8. Test on at least two actual phones. Create a test race, invite a second coach,
-   select different checkpoints, verify the countdown, record splits, and verify
-   both phones see the same times. Turn off service on one device, record and
-   undo taps, reload, reconnect, and verify the queued records arrive once.
+   select different checkpoints, tap Start at a signal and verify both phones
+   use the button's timestamp with no countdown. Record splits, reset a false
+   start, then start again and verify old splits leave the current results.
+   Turn off service on one device, record and undo taps, reload, reconnect,
+   and verify queued records arrive once.
 9. After changing app files, bump the cache version in `sw.js`. Close old race
    tabs and reopen the app so all coaches run the same version. Do not update
    a timing deployment during a race.
@@ -64,16 +73,22 @@ Firebase documentation:
 
 ## Race-day flow
 
-- The starter creates a race with athletes (`bib, name`, one per line) and
-  checkpoints in order. The last checkpoint is the finish.
+- The starter names a race, selects a saved roster or uploads a CSV/text roster,
+  and sets checkpoints in order. The last checkpoint is the finish. CSV can
+  have `Bib,Name` or `Bib Number,First Name,Last Name` columns. Imported and
+  manually saved rosters stay in that phone's browser for future races; upload
+  the file again on another starter device. Clearing site data erases them.
 - Share the private invite. The invite proves membership; its secret is in the
   URL fragment, not a query string. It is NOT a public spectator link.
 - Coaches enter their names, join while online, choose their checkpoint, and
   sync the clock. Check the **Crew** view before starting.
-- The starter taps **Start race together**. It commits one estimated server-time
-  start five seconds in the future. Give the actual whistle/start signal at zero.
-  Other phones do not play a remote start sound. If the start arrives late, their
-  elapsed time still uses the original shared start timestamp.
+- The starter synchronizes the clock before the gun, then taps **Start at the
+  gun**. The local clock starts at that tap with no countdown. Other phones
+  receive the shared timestamp after the database confirms it. Network delay
+  affects when they see it, not the timestamp used for elapsed time. If the
+  database rejects the start, the starter's provisional clock returns to ready.
+- Timing tiles follow the most recent earlier checkpoint order. Athletes already
+  recorded at the selected checkpoint move below those still waiting.
 - Tap an athlete as they pass. A recorded athlete cannot be tapped again
   accidentally; tapping the tile opens details. Undo the mistaken tap to retry.
 - Results are ranked at a selected checkpoint, not by whichever distance a runner
@@ -81,10 +96,18 @@ Firebase documentation:
 - Multiple coaches may record the same checkpoint. Conflicting taps are visible;
   the earliest non-undone event is selected deterministically. The original coach
   or starter may undo an incorrect event; raw events are never overwritten.
-- End a race only after coaches finish recording. Offline taps from before the
-  end can still arrive. A race cannot be restarted; create another for a new heat.
+- For a false start, the starter uses **False start · reset**, confirms the
+  warning, then taps Start at the next gun. The same invite and roster remain.
+  Each reset advances the attempt number; prior splits remain in raw backups
+  but are excluded from the current results. Offline phones learn about the
+  reset on reconnect. Old pending taps are archived locally rather than sent
+  into the new attempt.
+- End a race only after coaches finish recording. Offline taps from the current
+  attempt can still arrive. Finished races cannot be reset; create a new race
+  for another heat.
 - Download results CSV and a raw JSON backup. A backup excludes coach-invite
-  secrets but includes raw events, undo records, and pending uploads.
+  secrets but includes raw events, undo records, pending uploads, and any
+  archived pending taps from earlier attempts.
 
 ## Spotty-service and accuracy limitations
 

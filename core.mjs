@@ -15,7 +15,7 @@ export function parseRoster(text) {
   return Object.fromEntries(lines.map((line, i) => {
     const parts = line.split(',');
     const bib = parts.length > 1 ? parts.shift().trim() : String(i + 1);
-    const name = parts.join(',').trim();
+    const name = parts.length ? parts.join(',').trim() : line;
     if (!bib || !name || bib.length > 12 || name.length > 60) throw new Error('Use a short bib and name, like 12, Alex.');
     if (bibs.has(bib.toLowerCase())) throw new Error(`Bib ${bib} is used twice.`);
     bibs.add(bib.toLowerCase());
@@ -33,6 +33,50 @@ export function parseCheckpoints(text) {
 
 export function ordered(map) { return Object.entries(map || {}).sort((a, b) => a[1].order - b[1].order); }
 
+export const runNumber = room => room?.state?.run || 1;
+
+export function rosterText(athletes) {
+  return ordered(athletes).map(([, athlete]) => `${athlete.bib}, ${athlete.name}`).join('\n');
+}
+
+export function parseRosterImport(text) {
+  const source = text.replace(/^\uFEFF/, '').trim();
+  if (!source) throw new Error('The roster file is empty.');
+  const lines = source.split(/\r?\n/).filter(line => line.trim());
+  // Plain text uses the same "bib, name" lines as the race form.
+  if (!lines[0].includes(',') && !lines[0].includes('"')) return parseRoster((/^name$/i.test(lines[0].trim()) ? lines.slice(1) : lines).join('\n'));
+  const records = [];
+  let row = [], cell = '', quoted = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '"') {
+      if (quoted && source[i + 1] === '"') { cell += '"'; i++; }
+      else quoted = !quoted;
+    } else if (ch === ',' && !quoted) { row.push(cell.trim()); cell = ''; }
+    else if ((ch === '\n' || ch === '\r') && !quoted) {
+      if (ch === '\r' && source[i + 1] === '\n') i++;
+      row.push(cell.trim()); if (row.some(Boolean)) records.push(row);
+      row = []; cell = '';
+    } else cell += ch;
+  }
+  if (quoted) throw new Error('The roster CSV has an unclosed quote.');
+  row.push(cell.trim()); if (row.some(Boolean)) records.push(row);
+  const headers = records[0].map(x => x.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const bibIndex = headers.findIndex(x => ['bib', 'bibnumber', 'number', 'athletenumber'].includes(x));
+  const nameIndex = headers.findIndex(x => ['name', 'athlete', 'athletename', 'student', 'studentname'].includes(x));
+  const firstIndex = headers.findIndex(x => ['firstname', 'first'].includes(x));
+  const lastIndex = headers.findIndex(x => ['lastname', 'last'].includes(x));
+  const hasHeader = nameIndex >= 0 || firstIndex >= 0 || lastIndex >= 0;
+  const data = hasHeader ? records.slice(1) : records;
+  const linesToParse = data.map((fields, i) => {
+    const name = hasHeader ? nameIndex >= 0 ? fields[nameIndex] : [fields[firstIndex] || '', fields[lastIndex] || ''].filter(Boolean).join(' ') : fields.slice(1).join(', ');
+    const bib = hasHeader ? bibIndex >= 0 ? fields[bibIndex] : String(i + 1) : fields[0];
+    if (!bib || !name) throw new Error(`Roster row ${i + (hasHeader ? 2 : 1)} needs a bib and name.`);
+    return `${bib}, ${name}`;
+  });
+  return parseRoster(linesToParse.join('\n'));
+}
+
 export function selectSplits(room, pending = {}) {
   const events = { ...(room.events || {}) };
   const voids = { ...(room.voids || {}) };
@@ -42,7 +86,7 @@ export function selectSplits(room, pending = {}) {
   }
   const cells = {};
   for (const [id, event] of Object.entries(events)) {
-    if (voids[id] || !room.athletes?.[event.athleteId] || !room.checkpoints?.[event.checkpointId] || !Number.isFinite(event.elapsedMs)) continue;
+    if (voids[id] || (event.run || 1) !== runNumber(room) || !room.athletes?.[event.athleteId] || !room.checkpoints?.[event.checkpointId] || !Number.isFinite(event.elapsedMs)) continue;
     const key = `${event.athleteId}:${event.checkpointId}`;
     const candidate = { ...event, id, pending: !!pending['event:' + id], failed: !!pending['event:' + id]?.error };
     (cells[key] ||= []).push(candidate);
@@ -53,6 +97,25 @@ export function selectSplits(room, pending = {}) {
     cells[key] = { ...cells[key][0], alternatives: cells[key].slice(1) };
   }
   return cells;
+}
+
+export function timingOrder(room, checkpointId, pending = {}) {
+  const athletes = ordered(room.athletes), checkpoints = ordered(room.checkpoints);
+  const index = checkpoints.findIndex(([id]) => id === checkpointId);
+  const cells = selectSplits(room, pending);
+  const previous = checkpoints.slice(0, Math.max(0, index)).map(([id]) => id);
+  const info = id => {
+    const current = cells[`${id}:${checkpointId}`];
+    for (let i = previous.length - 1; i >= 0; i--) {
+      const split = cells[`${id}:${previous[i]}`];
+      if (split) return { recorded: !!current, checkpoint: i, time: split.elapsedMs, currentTime: current?.elapsedMs ?? Infinity };
+    }
+    return { recorded: !!current, checkpoint: -1, time: Infinity, currentTime: current?.elapsedMs ?? Infinity };
+  };
+  return athletes.sort(([idA, a], [idB, b]) => {
+    const x = info(idA), y = info(idB);
+    return Number(x.recorded) - Number(y.recorded) || y.checkpoint - x.checkpoint || x.time - y.time || x.currentTime - y.currentTime || a.order - b.order;
+  });
 }
 
 export function leaderboard(room, checkpointId, pending = {}) {

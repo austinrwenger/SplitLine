@@ -31,7 +31,7 @@ try{
   await denied('coach cannot start',coach.ref(base+'/state').set(state));
   await denied('host cannot transfer ownership',host.ref(base+'/owner').set('coach'));
   await ok('creator starts race',host.ref(base+'/state').set(state));
-  await denied('creator cannot reset race',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0}));
+  await denied('cannot reset without advancing attempt',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0,run:1}));
   const e={athleteId:'a1',checkpointId:'c1',elapsedMs:1000,capturedAt:startedAt+1000,coachId:'coach',coachName:'Mile Coach',clockQuality:'synced'};
   await ok('member creates valid split',coach.ref(base+'/events/e1').set(e));
   await denied('member cannot overwrite split',coach.ref(base+'/events/e1').set({...e,elapsedMs:2000}));
@@ -45,10 +45,20 @@ try{
   await ok('recorder undoes own split',coach.ref(base+'/voids/e1').set({coachId:'coach',at:Date.now()}));
   await ok('member can record another split',coach.ref(base+'/events/e2').set(e));
   await ok('starter can undo another coach split',host.ref(base+'/voids/e2').set({coachId:'host',at:Date.now()}));
-  const endedAt=startedAt+5000;
-  await ok('creator ends race',host.ref(base+'/state').set({status:'finished',startedAt,endedAt}));
-  await ok('previously captured offline event may upload after finish',coach.ref(base+'/events/e3').set({...e,clockQuality:'cached'}));
-  await denied('new capture far after finish',coach.ref(base+'/events/e4').set({...e,capturedAt:endedAt+6000,elapsedMs:11000}));
+  await denied('coach cannot reset false start',coach.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0,run:2}));
+  await ok('starter resets false start',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0,run:2}));
+  await denied('old offline split cannot enter new attempt',coach.ref(base+'/events/old').set(e));
+  await denied('cannot skip attempt number',host.ref(base+'/state').set({status:'running',startedAt:Date.now(),endedAt:0,run:3}));
+  const nextStart=Date.now();
+  await ok('starter immediately begins attempt two',host.ref(base+'/state').set({status:'running',startedAt:nextStart,endedAt:0,run:2}));
+  await denied('previous attempt split rejected after restart',coach.ref(base+'/events/old').set(e));
+  const nextEvent={...e,run:2,capturedAt:nextStart+1000,elapsedMs:1000};
+  await ok('coach records in new attempt',coach.ref(base+'/events/e3').set(nextEvent));
+  const endedAt=nextStart+5000;
+  await ok('creator ends race',host.ref(base+'/state').set({status:'finished',startedAt:nextStart,endedAt,run:2}));
+  await ok('previously captured offline event may upload after finish',coach.ref(base+'/events/e4').set({...nextEvent,clockQuality:'cached'}));
+  await denied('new capture far after finish',coach.ref(base+'/events/e5').set({...nextEvent,capturedAt:endedAt+6000,elapsedMs:11000}));
+  await denied('finished race cannot be reset',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0,run:3}));
   await denied('cannot erase race',host.ref(base).remove());
   console.log('ALL Firebase emulator security checks passed');
 }finally{await env.cleanup();}

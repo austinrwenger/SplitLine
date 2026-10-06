@@ -62,12 +62,20 @@ export async function connectBackend(config) {
       await onDisconnect(path).set({ ...value, online: false, seenAt: serverTimestamp() });
       await set(path, { ...value, online: active, seenAt: serverTimestamp() });
     },
-    async start(id, startedAt) {
+    async start(id, startedAt, run) {
       const result = await runTransaction(ref(db, `races/${id}/state`), state => {
-        if (!state || state.status !== 'ready') return;
-        return { status: 'running', startedAt, endedAt: 0 };
+        if (!state || state.status !== 'ready' || (state.run || 1) !== run) return;
+        return state.run ? { status: 'running', startedAt, endedAt: 0, run } : { status: 'running', startedAt, endedAt: 0 };
       }, { applyLocally: false });
       if (!result.committed) throw new Error('This race has already started, or the start was not confirmed.');
+      return result.snapshot.val();
+    },
+    async reset(id, run) {
+      const result = await runTransaction(ref(db, `races/${id}/state`), state => {
+        if (!state || state.status !== 'running' || (state.run || 1) + 1 !== run) return;
+        return { status: 'ready', startedAt: 0, endedAt: 0, run };
+      }, { applyLocally: false });
+      if (!result.committed) throw new Error('This race was already reset or ended. Reload to see its current state.');
       return result.snapshot.val();
     },
     async finish(id, endedAt) {

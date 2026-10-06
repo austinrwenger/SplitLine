@@ -1,4 +1,4 @@
-import { formatTime, parseRoster, parseCheckpoints, ordered, selectSplits, leaderboard, resultsCSV, cleanConfig, parseInvite } from './core.mjs';
+import { formatTime, parseRoster, parseRosterImport, rosterText, parseCheckpoints, ordered, runNumber, timingOrder, selectSplits, leaderboard, resultsCSV, cleanConfig, parseInvite } from './core.mjs';
 import configuredBackend from './firebase-config.mjs';
 
 const KEY = 'splitline-store-v1';
@@ -8,10 +8,12 @@ const hex = bytes => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), x
 let store;
 let storageFailed = false;
 try { store = JSON.parse(localStorage.getItem(KEY)); } catch { storageFailed = true; }
-store ||= { version:1, deviceId:hex(16), coachName:'', config:null, sessions:{}, active:null };
+store ||= { version:1, deviceId:hex(16), coachName:'', config:null, sessions:{}, rosters:{}, active:null };
+store.rosters ||= {};
 let backend = null, backendStatus = 'unconfigured', backendError = '', liveOnline = false;
 let unsubscribe = null, stopConnection = null, flight = false, clock = null, wakeLock = null;
 let view = 'timing', search = '', resultCheckpoint = '', toastTimer = null, busy = false;
+let pendingStart = null, pendingReset = null;
 const session = () => store.sessions[store.active];
 const practice = () => session()?.mode === 'practice';
 const uid = () => practice() ? store.deviceId : backend?.uid || session()?.uid;
@@ -30,6 +32,18 @@ function commit(update) {
   storageFailed = false;
 }
 function saveSession(update) { const id = store.active; commit(next => update(next.sessions[id])); }
+function archiveOldPending(current, newRoom) {
+  if (runNumber(current.room) === runNumber(newRoom)) return 0;
+  let count = 0;
+  current.archivedPending ||= {};
+  for (const [key, item] of Object.entries(current.pending || {})) {
+    if ((item.run || item.data.run || 1) === runNumber(newRoom)) continue;
+    current.archivedPending[key] = item;
+    delete current.pending[key];
+    count++;
+  }
+  return count;
+}
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.add('visible'); toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4200); }
 function formError(error) { const target = $('#formError'); if (target) { target.textContent = friendly(error); target.classList.remove('hidden'); } else toast(friendly(error)); }
 function friendly(error) {
@@ -76,10 +90,12 @@ function raceMarkup() {
   if (practice()) notice += '<div class="notice">Single-phone practice. Nothing here is shared with other devices. Use this mode to try the controls.</div>';
   else if (!online()) notice += `<div class="notice">Offline: this phone can keep recording a race whose start it already received. Other coaches’ new splits will appear after reconnecting.${n ? ` ${n} tap${n===1?'':'s'} waiting to upload.` : ''}</div>`;
   if (errors) notice += `<div class="notice danger">${errors} upload${errors===1?'':'s'} failed. They remain saved on this phone. <button class="link-button" data-action="retry">Retry uploads</button> · <button class="link-button" data-action="backup">Download backup</button></div>`;
+  if (Object.keys(s.archivedPending || {}).length) notice += `<div class="notice">Splits saved on this phone from an earlier start are excluded from this attempt. <button class="link-button" data-action="backup">Download raw backup</button></div>`;
   if (storageFailed) notice += '<div class="notice danger">Phone storage is not working. Do not record until resolved. Export a backup.</div>';
   if (s.uid && backend && s.mode === 'live' && backend.uid !== s.uid && n) notice += '<div class="notice danger">Your browser’s coach identity changed. Old pending taps cannot upload under the new identity. Export a backup for manual recovery.</div>';
   const content = view === 'timing' ? timingMarkup(cells) : view === 'results' ? resultsMarkup() : crewMarkup();
-  return `<main class="wrap"><div class="race-title"><div><h1>${esc(room.meta.name)}</h1><p>${Object.keys(room.athletes).length} athletes · ${cps.length} checkpoints · ${esc(store.coachName || 'Coach')}</p></div><button class="button small" data-action="invite">↗ Invite crew</button></div>${notice}<div class="race-grid"><section><div class="clock-card"><div class="clock-head"><span class="eyebrow">RACE CLOCK</span><span class="pill">${room.state.status === 'ready' ? 'Waiting to start' : room.state.status === 'finished' ? 'Race ended' : 'Race in progress'}</span></div><div class="race-clock" id="raceClock">00:00.0</div><div class="clock-caption" id="clockCaption">Everyone runs from the same start.</div>${clockActions()}<div class="clock-quality"><span>${clockLabel()}</span>${room.state.status === 'ready' && !practice() ? '<button data-action="calibrate">Sync clock</button>' : '<span>Manual timing</span>'}</div></div><nav class="tabs" aria-label="Race views">${[['timing','◷ Timing'],['results','≋ Results'],['crew','◎ Crew']].map(([v,label])=>`<button class="tab ${view===v?'active':''}" data-action="view" data-view="${v}" aria-current="${view===v?'page':'false'}">${label}</button>`).join('')}</nav>${content}</section><aside class="race-aside"><div class="card activity-card"><div class="card-head"><h2>Latest splits</h2><span class="eyebrow muted">CREW FEED</span></div>${activityMarkup(8)}<div class="queue-line"><span>${n ? `${n} pending on this phone` : practice() ? 'Stored on this phone' : 'No pending uploads'}</span><button class="link-button" data-action="export">Export</button></div></div><p class="bottom-note">Timing is taken at the tap—not when the upload arrives. The server clock is an estimate; phone latency and human reaction affect accuracy.</p><button class="link-button" data-action="home">← Leave race view</button></aside></div><div class="sticky-mobile"><span>${n ? `${n} pending · saved here` : practice() ? 'Practice · saved here' : online() ? 'Connected · no pending uploads' : 'Offline · saved here'}</span><button class="button small" data-action="last-undo" ${canUndoLast() ? '' : 'disabled'}>↶ Undo last tap</button></div></main>`;
+  const status = pendingReset ? 'Resetting false start…' : pendingStart ? 'Confirming shared start…' : room.state.status === 'ready' ? 'Waiting to start' : room.state.status === 'finished' ? 'Race ended' : 'Race in progress';
+  return `<main class="wrap"><div class="race-title"><div><h1>${esc(room.meta.name)}</h1><p>${Object.keys(room.athletes).length} athletes · ${cps.length} checkpoints · Attempt ${runNumber(room)} · ${esc(store.coachName || 'Coach')}</p></div><button class="button small" data-action="invite">↗ Invite crew</button></div>${notice}<div class="race-grid"><section><div class="clock-card"><div class="clock-head"><span class="eyebrow">RACE CLOCK</span><span class="pill">${status}</span></div><div class="race-clock" id="raceClock">00:00.0</div><div class="clock-caption" id="clockCaption">Everyone runs from the same start.</div>${clockActions()}<div class="clock-quality"><span>${clockLabel()}</span>${room.state.status === 'ready' && !practice() ? '<button data-action="calibrate">Sync clock</button>' : '<span>Manual timing</span>'}</div></div><nav class="tabs" aria-label="Race views">${[['timing','◷ Timing'],['results','≋ Results'],['crew','◎ Crew']].map(([v,label])=>`<button class="tab ${view===v?'active':''}" data-action="view" data-view="${v}" aria-current="${view===v?'page':'false'}">${label}</button>`).join('')}</nav>${content}</section><aside class="race-aside"><div class="card activity-card"><div class="card-head"><h2>Latest splits</h2><span class="eyebrow muted">CREW FEED</span></div>${activityMarkup(8)}<div class="queue-line"><span>${n ? `${n} pending on this phone` : practice() ? 'Stored on this phone' : 'No pending uploads'}</span><button class="link-button" data-action="export">Export</button></div></div><p class="bottom-note">Timing is taken at the tap—not when the upload arrives. The server clock is an estimate; phone latency and human reaction affect accuracy.</p><button class="link-button" data-action="home">← Leave race view</button></aside></div><div class="sticky-mobile"><span>${n ? `${n} pending · saved here` : practice() ? 'Practice · saved here' : online() ? 'Connected · no pending uploads' : 'Offline · saved here'}</span><button class="button small" data-action="last-undo" ${canUndoLast() ? '' : 'disabled'}>↶ Undo last tap</button></div></main>`;
 }
 function clockLabel() {
   if (practice()) return 'Local practice clock';
@@ -89,24 +105,27 @@ function clockLabel() {
 }
 function clockActions() {
   const state = session().room.state;
+  if (pendingStart) return '<div class="clock-action"><span class="small">Clock started on this phone · confirming for the crew…</span></div>';
+  if (pendingReset) return '<div class="clock-action"><span class="small">Resetting for the crew…</span></div>';
   if (state.status === 'ready') {
     if (!isOwner()) return '<div class="clock-action"><span class="small muted" style="color:#b5c3d0">The starter will start the shared race. Stay connected until the start appears.</span></div>';
-    return `<div class="clock-action"><button class="button primary" data-action="start" ${busy || !online() || (!practice() && !clock) ? 'disabled' : ''}>▶ Start race together</button></div>`;
+    const needsSync = !practice() && (!clock || Date.now() - clock.calibratedAt > 300000);
+    return `<div class="clock-action"><button class="button primary" data-action="start" ${busy || !online() || needsSync ? 'disabled' : ''}>▶ Start at the gun</button>${needsSync ? '<span class="small">Sync clock before the gun.</span>' : ''}</div>`;
   }
-  return `<div class="clock-action">${isOwner() && state.status === 'running' ? '<button class="button soft" data-action="finish">End race</button>' : ''}<button class="button soft" data-action="export">↓ Export results</button></div>`;
+  return `<div class="clock-action">${isOwner() && state.status === 'running' ? '<button class="button soft" data-action="finish">End race</button><button class="button soft" data-action="false-start">False start · reset</button>' : ''}<button class="button soft" data-action="export">↓ Export results</button></div>`;
 }
 function checkpointSelect(selected, id, label) {
   return `<div class="checkpoint-select"><label for="${id}">${label}</label><select id="${id}">${ordered(session().room.checkpoints).map(([cpid,cp])=>`<option value="${cpid}" ${selected===cpid?'selected':''}>${esc(cp.label)}${cp.finish?' · FINISH':''}</option>`).join('')}</select></div>`;
 }
 function timingMarkup(cells) {
   const s=session(), room=s.room, cp=s.checkpoint;
-  const athletes=ordered(room.athletes).filter(([,a]) => `${a.name} ${a.bib}`.toLowerCase().includes(search.toLowerCase()));
+  const athletes=timingOrder(room,cp,s.pending).filter(([,a]) => `${a.name} ${a.bib}`.toLowerCase().includes(search.toLowerCase()));
   const recorded = Object.keys(room.athletes).filter(id=>cells[`${id}:${cp}`]).length;
   return `${checkpointSelect(cp,'checkpoint','MY CHECKPOINT')}<div class="section-head"><h2>Tap as they pass.</h2><span class="small">${recorded} / ${Object.keys(room.athletes).length} recorded</span></div><input class="search" id="athleteSearch" type="search" autocomplete="off" value="${esc(search)}" placeholder="Find athlete or bib…" aria-label="Find athlete or bib"><div class="athlete-grid">${athletes.map(([id,a])=>{
     const split=cells[`${id}:${cp}`];
     const disabled=!split && (room.state.status !== 'running' || !room.state.startedAt || storageFailed || busy);
     return `<button class="athlete-button ${split?'done':''} ${split?.pending?'pending':''} ${split?.failed?'failed':''}" data-action="tap" data-id="${id}" ${disabled?'disabled':''}><span class="bib">BIB ${esc(a.bib)}</span><span class="athlete-name">${esc(a.name)}</span><span class="tap-icon">${split?'✓':'＋'}</span>${split?`<span class="athlete-time">${formatTime(split.elapsedMs)}</span>`:''}<span class="athlete-hint">${split ? split.failed ? 'Upload failed · saved here' : split.pending ? 'Pending upload · saved here' : split.alternatives.length ? 'Multiple taps · review' : practice() ? 'Saved here · tap to review' : 'Synced · tap to review' : 'Tap to record split'}</span></button>`;
-  }).join('')}</div>${athletes.length ? '' : '<div class="empty">No matching athletes.</div>'}<p class="bottom-note" style="margin-top:14px">Choose your checkpoint before timing. A recorded athlete opens their split details rather than recording another accidental tap.</p>`;
+  }).join('')}</div>${athletes.length ? '' : '<div class="empty">No matching athletes.</div>'}<p class="bottom-note" style="margin-top:14px">Athletes follow their latest checkpoint order. Recorded athletes move below those still waiting. Choose your checkpoint before timing.</p>`;
 }
 function resultsMarkup() {
   const s=session(), room=s.room, rows=leaderboard(room,resultCheckpoint,s.pending);
@@ -123,7 +142,7 @@ function allEffectiveEvents() {
   const s=session(); if (!s) return [];
   const events={...(s.room.events||{})}, voids={...(s.room.voids||{})};
   for(const item of Object.values(s.pending||{})) (item.kind==='event'?events:voids)[item.id]=item.data;
-  return Object.entries(events).filter(([id])=>!voids[id]).map(([id,e])=>({...e,id,pending:!!s.pending['event:'+id]})).sort((a,b)=>b.capturedAt-a.capturedAt || b.id.localeCompare(a.id));
+  return Object.entries(events).filter(([id,e])=>!voids[id] && (e.run || 1)===runNumber(s.room)).map(([id,e])=>({...e,id,pending:!!s.pending['event:'+id]})).sort((a,b)=>b.capturedAt-a.capturedAt || b.id.localeCompare(a.id));
 }
 function canUndoLast() { return allEffectiveEvents().some(e=>e.coachId===uid()); }
 function activityMarkup(max) {
@@ -145,13 +164,12 @@ function timeNow() {
 }
 function updateClock() {
   const s=session(), display=$('#raceClock'); if(!s || !display) return;
-  const state=s.room.state;
+  const state=pendingReset ? {status:'ready',startedAt:0,endedAt:0} : pendingStart ? {status:'running',startedAt:pendingStart.startedAt,endedAt:0} : s.room.state;
   const now=timeNow();
   const elapsed=state.status==='ready'?0:(state.status==='finished'?state.endedAt:now)-state.startedAt;
   display.textContent=formatTime(Math.max(0,elapsed));
   const caption=$('#clockCaption');
-  if(state.status==='running'&&now<state.startedAt) { display.textContent=`${Math.ceil((state.startedAt-now)/1000)}`; caption.textContent='Shared start countdown…'; }
-  else caption.textContent=state.status==='ready'?'The starter controls the start for everyone.':state.status==='finished'?'Race ended. Late uploads can still arrive.':'Tap an athlete at your selected checkpoint.';
+  caption.textContent=pendingStart?'Clock started at your tap. Confirming the start online…':pendingReset?'Waiting for the reset to reach your crew…':state.status==='ready'?'Tap Start at the gun; there is no countdown.':state.status==='finished'?'Race ended. Late uploads can still arrive.':'Tap an athlete at your selected checkpoint.';
 }
 async function ensureBackend() {
   if(backend) return backend;
@@ -181,6 +199,7 @@ async function calibrateClock() {
 }
 async function attachSession() {
   unsubscribe?.(); unsubscribe=null;
+  pendingStart=null; pendingReset=null;
   const s=session(); if(!s) return;
   view='timing'; search=''; resultCheckpoint=s.checkpoint;
   if(s.mode==='practice') { render(); return; }
@@ -191,10 +210,10 @@ async function attachSession() {
     const id=store.active;
     if(backend.uid!==s.uid && Object.keys(s.pending||{}).length) toast('Coach identity changed. Export pending taps for recovery.');
     const remote=await backend.join(id,s.token,store.coachName||'Coach');
-    saveSession(current=>{current.room=remote;current.uid=backend.uid;});
+    saveSession(current=>{archiveOldPending(current,remote);current.room=remote;current.uid=backend.uid;});
     unsubscribe=backend.subscribe(id,room=>{
       if(store.active!==id || !room) return;
-      try { saveSession(current=>{current.room=room;}); render(); } catch(error) { toast(friendly(error)); }
+      try { let archived=0; saveSession(current=>{archived=archiveOldPending(current,room);current.room=room;});render();if(archived)toast(`${archived} old tap${archived===1?'':'s'} kept in the raw backup after the false start.`); } catch(error) { toast(friendly(error)); }
     },error=>{backendError=friendly(error);toast(backendError);});
     await updatePresence();
     await requestWakeLock();
@@ -217,10 +236,15 @@ async function flushQueue() {
       if(!backend.online || store.active!==id) break;
       if(item.error) continue;
       const queueKey=item.kind+':'+item.id;
+      if(!store.sessions[id].pending[queueKey]) continue;
+      if((item.run || item.data.run || 1)!==runNumber(store.sessions[id].room)) {
+        commit(next=>{const current=next.sessions[id];current.archivedPending||={};current.archivedPending[queueKey]=item;delete current.pending[queueKey];});
+        render();continue;
+      }
       if(item.data.coachId!==backend.uid) { commit(next=>{next.sessions[id].pending[queueKey].error='Coach identity changed';});render();continue; }
       try {
         await backend.send(id,item);
-        commit(next=>{const current=next.sessions[id];(item.kind==='event'?(current.room.events||={}):(current.room.voids||={}))[item.id]=item.data;delete current.pending[queueKey];});
+        commit(next=>{const current=next.sessions[id];if(!current.pending[queueKey])return;(item.kind==='event'?(current.room.events||={}):(current.room.voids||={}))[item.id]=item.data;delete current.pending[queueKey];});
       } catch(error) { commit(next=>{if(next.sessions[id].pending[queueKey]) next.sessions[id].pending[queueKey].error=friendly(error);}); }
       render();
     }
@@ -229,18 +253,20 @@ async function flushQueue() {
 function enqueue(kind,id,data) {
   saveSession(s=>{
     if(s.mode==='practice') { (kind==='event'?(s.room.events||={}):(s.room.voids||={}))[id]=data; }
-    else s.pending[kind+':'+id]={kind,id,data};
+    else s.pending[kind+':'+id]={kind,id,data,run:runNumber(s.room)};
   });
   render(); flushQueue();
 }
 function recordTap(athleteId) {
   const capturedAt=Math.round(timeNow()); // Take timestamp BEFORE UI, storage, or network work.
+  if(busy || pendingStart || pendingReset) return;
   const s=session(); if(!s) return;
   const existing=selectSplits(s.room,s.pending)[`${athleteId}:${s.checkpoint}`];
   if(existing) return splitDetails(athleteId,existing);
   if(s.room.state.status!=='running' || capturedAt<s.room.state.startedAt) return toast('Wait for the shared start.');
   if(s.mode==='live'&&!s.clock&&!clock) return toast('Synchronize your phone’s clock before recording.');
   const event={athleteId,checkpointId:s.checkpoint,elapsedMs:Math.max(0,capturedAt-s.room.state.startedAt),capturedAt,coachId:uid(),coachName:store.coachName||'Coach',clockQuality:practice()?'local':clock&&online()?'synced':'cached'};
+  if(runNumber(s.room)>1)event.run=runNumber(s.room);
   enqueue('event',hex(16),event);
   navigator.vibrate?.(30);
   toast(`${s.room.athletes[athleteId].name} · ${formatTime(event.elapsedMs)} · ${practice()?'saved here':online()?'uploading':'saved, waiting to upload'}`);
@@ -257,7 +283,33 @@ function undo(id) {
 }
 function createDialog(mode='live') {
   if(mode==='live'&&!hasConfig()) { setupDialog();return; }
-  openModal(mode==='practice'?'Single-phone practice':'Create a shared race',mode==='practice'?'Practice is local only. No other phone can join this race.':'Set the roster and checkpoints once. Every coach joins the same race.',`<label class="field">Your coach name<input id="coachName" maxlength="40" value="${esc(store.coachName)}" placeholder="Coach name" autocomplete="name"></label><label class="field">Race name<input id="raceName" maxlength="60" value="${mode==='practice'?'Practice race':'Team time trial'}"></label><label class="field">Athletes · one per line<textarea id="roster" rows="5" placeholder="12, Alex\n24, Jordan\n36, Sam">${mode==='practice'?'12, Alex\n24, Jordan\n36, Sam\n48, Casey\n52, Taylor\n67, Morgan':''}</textarea><small>Use bib, name — or just names. Up to 20 athletes. Initials are fine.</small></label><label class="field">Checkpoints · in race order<textarea id="checkpoints" rows="3">Mile 1\nMile 2\nFinish</textarea><small>Any distance or label. Last checkpoint is the finish.</small></label>${actions(mode==='practice'?'Create practice race':'Create race',mode==='practice'?'save-practice':'save-race')}`);
+  const saved=Object.entries(store.rosters).sort((a,b)=>b[1].savedAt-a[1].savedAt);
+  const [selectedId,selected]=saved[0]||[];
+  const initial=selected?rosterText(selected.athletes):mode==='practice'?'12, Alex\n24, Jordan\n36, Sam\n48, Casey\n52, Taylor\n67, Morgan':'';
+  const date=new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric'}).format(new Date());
+  openModal(mode==='practice'?'New practice race':'New shared race','Name the race, choose a roster, and set your checkpoints.',`<label class="field">Race name<input id="raceName" maxlength="60" value="${mode==='practice'?'Practice · ':''}Race · ${date}" autocomplete="off"></label><label class="field">Your coach name<input id="coachName" maxlength="40" value="${esc(store.coachName)}" placeholder="Coach name" autocomplete="name"></label><div class="roster-box"><h3>Race roster</h3><label class="field">Use a saved roster<select id="savedRoster"><option value="">Enter a new roster</option>${saved.map(([id,r])=>`<option value="${id}" ${id===selectedId?'selected':''}>${esc(r.name)} · ${Object.keys(r.athletes).length} athletes</option>`).join('')}</select></label><div class="roster-tools"><label class="button small upload-button">↑ Upload CSV or TXT<input id="rosterFile" type="file" accept=".csv,.txt,text/csv,text/plain"></label><span class="small muted">Upload saves the roster for future races on this phone.</span></div><label class="field">Athletes · one per line<textarea id="roster" rows="5" placeholder="12, Alex\n24, Jordan\n36, Sam">${esc(initial)}</textarea><small>Bib, name · up to 20 athletes. You can edit this race without changing the saved roster.</small></label><label class="field">Save this roster as<input id="rosterName" maxlength="60" value="${esc(selected?.name||'')}" placeholder="e.g. Varsity runners"></label><button class="button small" data-action="save-roster">Save roster for future races</button></div><label class="field" style="margin-top:18px">Checkpoints · in race order<textarea id="checkpoints" rows="3">Mile 1\nMile 2\nFinish</textarea><small>Rename or remove lines as needed. Last checkpoint is the finish.</small></label>${actions(mode==='practice'?'Create practice race':'Create race',mode==='practice'?'save-practice':'save-race')}`);
+}
+function saveRosterFromForm() {
+  const athletes=parseRoster($('#roster').value);
+  const name=$('#rosterName').value.trim();
+  if(!name || name.length>60) throw new Error('Name this roster before saving it.');
+  const selected=$('#savedRoster').value;
+  const id=store.rosters[selected]?selected:hex(8);
+  commit(next=>{next.rosters||={};next.rosters[id]={name,athletes,savedAt:Date.now()};});
+  const select=$('#savedRoster');
+  select.innerHTML='<option value="">Enter a new roster</option>'+Object.entries(store.rosters).sort((a,b)=>b[1].savedAt-a[1].savedAt).map(([key,r])=>`<option value="${key}">${esc(r.name)} · ${Object.keys(r.athletes).length} athletes</option>`).join('');
+  select.value=id;
+  toast(`${name} saved for future races on this phone.`);
+}
+async function uploadRoster(file) {
+  if(!file)return;
+  if(file.size>100000)throw new Error('Choose a small roster file (under 100 KB).');
+  const athletes=parseRosterImport(await file.text());
+  const name=file.name.replace(/\.[^.]+$/,'').trim().slice(0,60)||'Imported roster';
+  $('#savedRoster').value='';
+  $('#roster').value=rosterText(athletes);
+  $('#rosterName').value=name;
+  saveRosterFromForm();
 }
 async function createRace(mode) {
   if(busy) return;
@@ -270,7 +322,9 @@ async function createRace(mode) {
   try {
     if(mode==='live') await ensureBackend();
     const owner=mode==='practice'?store.deviceId:backend.uid;
-    const room={owner,invite:token,meta:{name,createdAt:Math.round(timeNow())},athletes,checkpoints,state:{status:'ready',startedAt:0,endedAt:0},members:{[owner]:{name:coachName,invite:token}},presence:mode==='practice'?{[owner]:{name:coachName,online:true,checkpointId:'c1',clockReady:true}}:{}};
+    const initialState={status:'ready',startedAt:0,endedAt:0};
+    if(mode==='practice')initialState.run=1;
+    const room={owner,invite:token,meta:{name,createdAt:Math.round(timeNow())},athletes,checkpoints,state:initialState,members:{[owner]:{name:coachName,invite:token}},presence:mode==='practice'?{[owner]:{name:coachName,online:true,checkpointId:'c1',clockReady:true}}:{}};
     if(mode==='live') await backend.create(id,room);
     commit(next=>{next.coachName=coachName;next.active=id;next.sessions[id]={mode,uid:owner,token,room,checkpoint:'c1',pending:{},createdAt:Date.now(),clock:mode==='live'&&clock?{offset:clock.offset,rtt:clock.rtt,calibratedAt:clock.calibratedAt}:null};});
     closeModal();await attachSession();
@@ -305,7 +359,7 @@ function setupDialog() {
   openModal('Connect live sharing','One shared Firebase project keeps your coaches’ phones connected.',`<div class="notice blue">The app interface and local practice are ready. Multi-device races are not enabled until this setup is complete.</div><ol class="check-list"><li>Create a project in the <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer">Firebase console</a>, then register a Web app.</li><li>Enable <strong>Authentication → Anonymous</strong>.</li><li>Create a <strong>Realtime Database</strong> in locked mode. Publish the supplied <a href="./database.rules.json" target="_blank" rel="noopener">database rules</a>, not public test-mode rules.</li><li>Copy your Web configuration, including databaseURL, below. Do not paste passwords, private keys, or service-account files.</li><li>Use this same configuration on each phone, or have it added to this app once. <a href="./README.md" target="_blank" rel="noopener">Full setup guide</a></li></ol><label class="field">Firebase Web configuration · JSON<textarea id="configInput" rows="5" spellcheck="false" placeholder='{"apiKey":"…","authDomain":"…","databaseURL":"https://…","projectId":"…","appId":"…"}'>${store.config?esc(JSON.stringify(store.config,null,2)):configuredBackend?esc(JSON.stringify(configuredBackend,null,2)):''}</textarea></label>${actions('Save & connect','save-config')}`);
 }
 function helpDialog() {
-  openModal('Race-day quick guide','One starter. One shared race. A checkpoint for every coach.',`<ol class="check-list"><li>The starter creates the race and shares its private coach invite.</li><li>Every coach joins while online, picks a checkpoint, and synchronizes their clock. Check the Crew tab.</li><li>The starter taps <strong>Start race together</strong>. A five-second countdown gives the shared start time. Use your own whistle or start signal; audio does not play on other phones.</li><li>Tap athletes as they pass. Green means saved online; amber means still pending on this phone. Undo the wrong tap immediately.</li><li>Results show rankings at one checkpoint and the complete split grid. Finish recording before ending the race.</li><li>If service drops, keep this app open. Taps are retained locally and retried when service returns. Live updates cannot travel while offline.</li><li>Do not clear browser storage or use private browsing during a race. Export results and a backup afterward.</li></ol><div class="notice">This is estimated, manual coaching timing—not certified race timing. Clock calibration is affected by network latency. Test on your actual phones before relying on it.</div><div class="stack"><button class="button" data-action="setup">Live sharing setup</button><button class="button" data-action="close">Got it</button></div>`);
+  openModal('Race-day quick guide','One starter. One shared race. A checkpoint for every coach.',`<ol class="check-list"><li>The starter creates the race, chooses a saved roster or uploads a CSV/text file, and shares the private coach invite.</li><li>Every coach joins while online, picks a checkpoint, and synchronizes their clock. Check the Crew tab.</li><li>The starter synchronizes their clock before the gun, then taps <strong>Start at the gun</strong>. The clock begins on that tap with no countdown; other phones receive the start after it is confirmed online.</li><li>Tap athletes as they pass. The timing list follows their latest checkpoint order. Yellow means saved on this phone but pending upload.</li><li>For a false start, the starter taps <strong>False start · reset</strong>, confirms, then taps Start again at the next gun. Earlier attempts stay in raw backups but leave the current leaderboard.</li><li>If service drops, keep this app open. Taps are retained locally and retried when service returns. Live updates cannot travel while offline.</li><li>Do not clear browser storage or use private browsing during a race. Export results and a backup afterward.</li></ol><div class="notice">This is estimated, manual coaching timing—not certified race timing. Clock calibration is affected by network latency. Test on your actual phones before relying on it.</div><div class="stack"><button class="button" data-action="setup">Live sharing setup</button><button class="button" data-action="close">Got it</button></div>`);
 }
 function download(text,name,type) {const blob=new Blob([text],{type});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(link.href),10000);}
 function exportResults() {const s=session();if(!s)return;download(resultsCSV(s.room,s.pending),`splitline-results-${store.active}.csv`,'text/csv;charset=utf-8');toast(pendingCount()?'Export includes pending splits labeled PENDING.':'Results exported.');}
@@ -317,10 +371,10 @@ async function leaveRace() {
   if(session()?.mode==='live' && backend?.online) {
     try { await backend.presence(id,{name:store.coachName||'Coach',checkpointId:session().checkpoint,clockReady:false},false); } catch { /* Leaving does not discard timing data. */ }
   }
-  commit(next=>{next.active=null;});view='timing';render();
+  commit(next=>{next.active=null;});pendingStart=null;pendingReset=null;view='timing';render();
 }
 
-async function handleAction(action,element) {
+async function handleAction(action,element,pressedAt) {
   switch(action) {
     case 'close':closeModal();break;
     case 'home':await leaveRace();break;
@@ -328,6 +382,7 @@ async function handleAction(action,element) {
     case 'practice':createDialog('practice');break;
     case 'save-practice':await createRace('practice');break;
     case 'save-race':await createRace('live');break;
+    case 'save-roster':saveRosterFromForm();break;
     case 'join':joinDialog();break;
     case 'save-join':await joinRace();break;
     case 'resume':commit(next=>{next.active=element.dataset.id;});await attachSession();break;
@@ -337,14 +392,38 @@ async function handleAction(action,element) {
     case 'last-undo':{const e=allEffectiveEvents().find(e=>e.coachId===uid());if(e)undo(e.id);break;}
     case 'start': {
       if(!isOwner() || !online())throw new Error('The starter must be online to start a shared race.');
-      if(!practice()&&(!clock||Date.now()-clock.calibratedAt>300000)){await calibrateClock();}
-      const startedAt=Math.round(timeNow()+5000);
-      busy=true;render();
-      try {if(practice())saveSession(s=>{if(s.room.state.status!=='ready')throw new Error('Race already started.');s.room.state={status:'running',startedAt,endedAt:0};});else await backend.start(store.active,startedAt);await requestWakeLock();toast('Five-second countdown. Use your whistle at zero.');}finally{busy=false;render();}
+      if(busy || session().room.state.status!=='ready')throw new Error('This race is not waiting to start.');
+      if(!practice()&&(!clock||Date.now()-clock.calibratedAt>300000))throw new Error('Sync the starter clock before the gun, then tap Start.');
+      const startedAt=pressedAt, run=runNumber(session().room), id=store.active;
+      busy=true;pendingStart={startedAt,run,id};render();
+      try {
+        if(practice())saveSession(s=>{s.room.state={status:'running',startedAt,endedAt:0,run};});
+        else {const confirmed=await backend.start(id,startedAt,run);if(store.active===id)saveSession(s=>{s.room.state=confirmed;});}
+        await requestWakeLock();toast('Race started at your tap.');
+      } finally { pendingStart=null;busy=false;render(); }
+      break;
+    }
+    case 'false-start': {
+      if(!isOwner() || session().room.state.status!=='running')throw new Error('Only the starter can reset a running race.');
+      openModal('Reset after a false start?','The timer will stop and return to zero on every connected phone.',`<div class="notice">All splits from attempt ${runNumber(session().room)} will leave the current results. They remain in the raw backup. Coaches who are offline will see the reset when they reconnect.</div>${actions('Reset race to ready','confirm-reset')}`);
+      break;
+    }
+    case 'confirm-reset': {
+      if(!isOwner() || !online() || session().room.state.status!=='running')throw new Error('The starter must be online to reset a running race.');
+      const id=store.active, nextRun=runNumber(session().room)+1;
+      busy=true;pendingReset={id,nextRun};closeModal();render();
+      try {
+        const ready=practice()?{status:'ready',startedAt:0,endedAt:0,run:nextRun}:await backend.reset(id,nextRun);
+        if(store.active===id)saveSession(s=>{archiveOldPending(s,{state:ready});s.room.state=ready;});
+        toast('False start reset. Tap Start at the next gun.');
+      } catch(error) {
+        if(/permission.denied|PERMISSION_DENIED/.test(String(error.code||'')+error.message))throw new Error('False-start reset needs the updated Firebase Realtime Database rules. Publish the current database.rules.json, then try again.');
+        throw error;
+      } finally {pendingReset=null;busy=false;render();}
       break;
     }
     case 'finish':openModal('End this race?','Only end after all checkpoint recording is complete. Pending offline splits can still upload afterward.',`<div class="notice">The race cannot be restarted. Create a new race for another heat.</div>${actions('End race','confirm-finish')}`);break;
-    case 'confirm-finish':{if(!isOwner()||!online())throw new Error('The starter must be online to end the race.');const endedAt=Math.round(timeNow());if(endedAt<session().room.state.startedAt)throw new Error('Wait until the countdown finishes.');if(practice())saveSession(s=>{s.room.state.status='finished';s.room.state.endedAt=endedAt;});else await backend.finish(store.active,endedAt);closeModal();render();break;}
+    case 'confirm-finish':{if(!isOwner()||!online())throw new Error('The starter must be online to end the race.');const endedAt=Math.round(timeNow());if(endedAt<session().room.state.startedAt)throw new Error('The shared start has not been confirmed yet.');if(practice())saveSession(s=>{s.room.state.status='finished';s.room.state.endedAt=endedAt;});else await backend.finish(store.active,endedAt);closeModal();render();break;}
     case 'calibrate':await calibrateClock();toast('Clock estimate synchronized.');break;
     case 'invite':inviteDialog();break;
     case 'share':if(navigator.share){try{await navigator.share({title:'Join our SplitLine race',url:inviteURL()});}catch(e){if(e.name!=='AbortError')throw e;}}else{await navigator.clipboard.writeText(inviteURL());toast('Coach invite copied.');}break;
@@ -363,9 +442,15 @@ async function handleAction(action,element) {
     case 'help':helpDialog();break;
   }
 }
-document.addEventListener('click',async event=>{const element=event.target.closest('[data-action]');if(!element||element.disabled)return;event.preventDefault();try{await handleAction(element.dataset.action,element);}catch(error){formError(error);}});
+document.addEventListener('click',async event=>{const element=event.target.closest('[data-action]');if(!element||element.disabled)return;const pressedAt=element.dataset.action==='start'?Math.round(timeNow()):undefined;event.preventDefault();try{await handleAction(element.dataset.action,element,pressedAt);}catch(error){formError(error);}});
 document.addEventListener('input',event=>{if(event.target.id==='athleteSearch'){search=event.target.value;render();}});
 document.addEventListener('change',event=>{
+  if(event.target.id==='savedRoster') {
+    const roster=store.rosters[event.target.value];
+    $('#roster').value=roster?rosterText(roster.athletes):'';
+    $('#rosterName').value=roster?.name||'';
+  }
+  if(event.target.id==='rosterFile')uploadRoster(event.target.files?.[0]).catch(formError);
   if(event.target.id==='checkpoint'){try{saveSession(s=>{s.checkpoint=event.target.value;});render();updatePresence();}catch(error){toast(friendly(error));}}
   if(event.target.id==='resultCheckpoint'){resultCheckpoint=event.target.value;render();}
 });

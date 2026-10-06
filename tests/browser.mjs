@@ -24,7 +24,8 @@ export async function connectBackend(){
     async join(id,token,name){return request('join',{id,token,name});},
     subscribe(id,callback,error){let active=true;let last='';const poll=async()=>{if(!active||!navigator.onLine)return;try{const room=await request('read',{id});const text=JSON.stringify(room);if(text!==last){last=text;callback(room);}}catch(e){if(navigator.onLine)error(e);}};const timer=setInterval(poll,150);poll();return()=>{active=false;clearInterval(timer);};},
     async presence(id,value){await request('presence',{id,value});},
-    async start(id,startedAt){return request('start',{id,startedAt});},
+    async start(id,startedAt,run){return request('start',{id,startedAt,run});},
+    async reset(id,run){return request('reset',{id,run});},
     async finish(id,endedAt){return request('finish',{id,endedAt});},
     async send(id,item){await request('send',{id,item});},
     dispose(){window.removeEventListener('online',notify);window.removeEventListener('offline',notify);listeners.clear();}
@@ -42,9 +43,10 @@ const server=http.createServer(async(req,res)=>{
       else{if(!room?.members?.[uid])throw new Error('Access denied');
         if(op==='read')value=room;
         if(op==='presence'){(room.presence||={})[uid]={...body.value,online:true,seenAt:Date.now()};}
-        if(op==='start'){assert.equal(room.owner,uid);assert.equal(room.state.status,'ready');room.state={status:'running',startedAt:body.startedAt,endedAt:0};value=room.state;}
+        if(op==='start'){assert.equal(room.owner,uid);assert.equal(room.state.status,'ready');assert.equal(room.state.run||1,body.run);room.state={...room.state,status:'running',startedAt:body.startedAt,endedAt:0};value=room.state;}
+        if(op==='reset'){assert.equal(room.owner,uid);assert.equal(room.state.status,'running');assert.equal((room.state.run||1)+1,body.run);room.state={status:'ready',startedAt:0,endedAt:0,run:body.run};value=room.state;}
         if(op==='finish'){assert.equal(room.owner,uid);room.state={...room.state,status:'finished',endedAt:body.endedAt};}
-        if(op==='send'){const item=body.item;assert.equal(item.data.coachId,uid);if(item.kind==='event'){assert.ok(room.athletes[item.data.athleteId]);assert.ok(room.checkpoints[item.data.checkpointId]);(room.events||={})[item.id]||=item.data;}else{assert.ok(room.events?.[item.id]);assert.ok(room.events[item.id].coachId===uid||room.owner===uid);(room.voids||={})[item.id]||=item.data;}}
+        if(op==='send'){const item=body.item;assert.equal(item.data.coachId,uid);if(item.kind==='event'){assert.equal(item.data.run,room.state.run);assert.equal(room.state.status,'running');assert.ok(room.athletes[item.data.athleteId]);assert.ok(room.checkpoints[item.data.checkpointId]);(room.events||={})[item.id]||=item.data;}else{assert.ok(room.events?.[item.id]);assert.ok(room.events[item.id].coachId===uid||room.owner===uid);(room.voids||={})[item.id]||=item.data;}}
       }
       res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));return;
     }
@@ -74,7 +76,9 @@ try{
   await click(starter,'create');
   await starter.locator('#coachName').fill('Coach Start');
   await starter.locator('#raceName').fill('Saturday time trial');
-  await starter.locator('#roster').fill('12, Alex\n24, Jordan\n36, Sam');
+  await starter.locator('#rosterFile').setInputFiles({name:'Varsity.csv',mimeType:'text/csv',buffer:Buffer.from('Bib,Name\n12,Alex\n24,Jordan\n36,Sam')});
+  await until(async()=>!!(await data(starter)).rosters && Object.keys((await data(starter)).rosters).length===1,'uploaded roster saved');
+  assert.equal(await starter.locator('#roster').inputValue(),'12, Alex\n24, Jordan\n36, Sam');
   await click(starter,'save-race');
   await until(async()=>!!(await data(starter))?.active,'race created');
   let state=await data(starter),id=state.active;const token=state.sessions[id].token;
@@ -85,15 +89,30 @@ try{
   await checkpoint.locator('#checkpoint').selectOption('c2');
   await until(async()=>Object.keys((await active(starter)).room.members).length===2,'crew synchronized');
   assert.equal(await checkpoint.locator('[data-action="start"]').count(),0,'only starter can start');
+  const pressed=Date.now();
   await click(starter,'start');
   await until(async()=>(await active(checkpoint)).room.state.status==='running','shared start arrived');
   assert.equal((await active(starter)).room.state.startedAt,(await active(checkpoint)).room.state.startedAt,'same exact shared start');
-  await wait(5300);
+  assert.ok(Math.abs((await active(starter)).room.state.startedAt-pressed)<1000,'start timestamp matches the button press');
+  assert.notEqual(await starter.locator('#raceClock').innerText(),'5','no countdown');
+  await starter.locator('[data-action="tap"][data-id="a3"]').click();
   await starter.locator('[data-action="tap"][data-id="a1"]').click();
-  await until(async()=>Object.keys((await active(checkpoint)).room.events||{}).length===1,'first checkpoint visible on other phone');
+  await until(async()=>Object.keys((await active(checkpoint)).room.events||{}).length===2,'first splits visible');
+  assert.deepEqual(await checkpoint.locator('.athlete-button').evaluateAll(nodes=>nodes.map(x=>x.dataset.id)),['a3','a1','a2'],'next checkpoint follows prior split order');
+  assert.equal(await checkpoint.locator('[data-action="false-start"]').count(),0,'only starter can reset');
+  await click(starter,'false-start');await click(starter,'confirm-reset');
+  await until(async()=>(await active(checkpoint)).room.state.run===2,'false start reset reached crew');
+  assert.equal((await active(starter)).room.state.status,'ready');
+  assert.equal(await starter.locator('#raceClock').innerText(),'00:00.0');
+  assert.equal(await starter.locator('.athlete-button.done').count(),0,'old splits hidden on reset');
+  assert.equal(Object.keys(races.get(id).events).length,2,'old events retained in backup');
+  await click(starter,'start');
+  await until(async()=>(await active(checkpoint)).room.state.status==='running','second start reached crew');
+  await starter.locator('[data-action="tap"][data-id="a1"]').click();
+  await until(async()=>Object.keys((await active(checkpoint)).room.events||{}).length===3,'first checkpoint visible on other phone');
   await checkpoint.locator('[data-action="tap"][data-id="a1"]').click();
-  await until(async()=>Object.keys((await active(starter)).room.events||{}).length===2,'second checkpoint visible on starter');
-  console.log('PASS shared start, two coaches, different checkpoints and cross-phone results');
+  await until(async()=>Object.keys((await active(starter)).room.events||{}).length===4,'second checkpoint visible on starter');
+  console.log('PASS immediate shared start, checkpoint sorting, false-start reset and cross-phone results');
   await until(async()=>Object.keys((await active(checkpoint)).pending).length===0,'online acknowledgement');
   await checkpoint.evaluate(async()=>{const r=await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}));});
   await coach2.setOffline(true);await wait(300);
@@ -110,8 +129,8 @@ try{
   console.log('PASS offline recording, offline undo/re-tap, reload recovery and cached-clock tap');
   await coach2.setOffline(false);
   await until(async()=>Object.keys((await active(checkpoint)).pending).length===0,'all offline taps upload');
-  await until(async()=>Object.keys((await active(starter)).room.events||{}).length===5,'offline events visible to starter');
-  assert.equal(Object.keys(races.get(id).events).length,5,'no retry duplicates');
+  await until(async()=>Object.keys((await active(starter)).room.events||{}).length===7,'offline events visible to starter');
+  assert.equal(Object.keys(races.get(id).events).length,7,'no retry duplicates');
   assert.equal(Object.keys(races.get(id).voids).length,1,'undo arrived separately');
   await click(starter,'view');
   await starter.locator('[data-action="view"][data-view="results"]').click();
