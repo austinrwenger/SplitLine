@@ -14,12 +14,13 @@ const env=await initializeTestEnvironment({projectId:'demo-splitline',database:{
 const db=id=>env.authenticatedContext(id).database();
 const host=db('host'),coach=db('coach'),stranger=db('stranger'),guest=env.unauthenticatedContext().database();
 const id='0123456789abcdef',token='a'.repeat(32),base=`races/${id}`;
-const race={owner:'host',invite:token,meta:{name:'Test race',createdAt:Date.now()},athletes:parseRoster('12, Alex\n24, Jordan'),checkpoints:parseCheckpoints('Mile 1\nFinish'),state:{status:'ready',startedAt:0,endedAt:0},members:{host:{name:'Starter',invite:token}}};
+const race={owner:'host',invite:token,meta:{name:'Test race',createdAt:Date.now()},athletes:parseRoster('12, Alex, 18:30\n24, Jordan, 19:00'),checkpoints:parseCheckpoints('Mile 1, 1 mi\nFinish, 5 km'),state:{status:'ready',startedAt:0,endedAt:0},members:{host:{name:'Starter',invite:token}}};
 const ok=async(label,promise)=>{await assertSucceeds(promise);console.log('PASS '+label);};
 const denied=async(label,promise)=>{await assertFails(promise);console.log('PASS denied '+label);};
 try{
   await env.clearDatabase();
   await ok('creator can create race',host.ref(base).set(race));
+  await denied('invalid goal time is rejected',host.ref('races/1111111111111111').set({...race,athletes:{...race.athletes,a1:{...race.athletes.a1,goalMs:-1}}}));
   await denied('root race listing',host.ref('races').once('value'));
   await denied('unauthenticated read',guest.ref(base).once('value'));
   await denied('nonmember read',stranger.ref(base).once('value'));

@@ -50,6 +50,9 @@
             "order": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 20"
             },
+            "goalMs": {
+              ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 86400000"
+            },
             "$other": {
               ".validate": false
             }
@@ -67,6 +70,9 @@
             },
             "finish": {
               ".validate": "newData.isBoolean()"
+            },
+            "distanceM": {
+              ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 100000"
             },
             "$other": {
               ".validate": false

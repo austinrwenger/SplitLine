@@ -8,27 +8,62 @@ export function formatTime(ms, tenths = true) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}${tenths ? '.' + t % 10 : ''}`;
 }
 
+export function parseGoalTime(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const parts = text.split(':');
+  if (parts.length < 2 || parts.length > 3 || parts.some(part => !/^\d+(?:\.\d+)?$/.test(part))) return null;
+  const numbers = parts.map(Number);
+  const seconds = numbers.at(-1), minutes = numbers.at(-2), hours = parts.length === 3 ? numbers[0] : 0;
+  if (!Number.isInteger(minutes) || minutes < 0 || (parts.length === 3 && minutes > 59) || seconds < 0 || seconds >= 60 || hours < 0) return null;
+  const ms = Math.round((hours * 3600 + minutes * 60 + seconds) * 1000);
+  return ms > 0 && ms <= 86400000 ? ms : null;
+}
+
+export function formatGoalTime(ms) { return formatTime(ms, false); }
+
+function parseDistance(value) {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*(mi|mile|miles|km|kilometer|kilometers|m|meter|meters|yd|yard|yards)\s*$/i.exec(value);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const factor = unit.startsWith('mi') ? 1609.344 : unit.startsWith('k') ? 1000 : unit.startsWith('y') ? 0.9144 : 1;
+  const meters = amount * factor;
+  return Number.isFinite(meters) && meters > 0 && meters <= 100000 ? Math.round(meters * 1000) / 1000 : null;
+}
+
 export function parseRoster(text) {
   const lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
   if (!lines.length || lines.length > MAX_ATHLETES) throw new Error('Enter 1–20 athletes, one per line.');
   const bibs = new Set();
   return Object.fromEntries(lines.map((line, i) => {
-    const parts = line.split(',');
+    const parts = line.split(',').map(part => part.trim());
+    const possibleGoal = parts.length > 1 ? parseGoalTime(parts.at(-1)) : null;
+    if (parts.length > 2 && parts.at(-1).includes(':') && !possibleGoal) throw new Error(`Athlete ${i + 1} has an invalid goal time. Use minutes:seconds.`);
+    if (possibleGoal) parts.pop();
     const bib = parts.length > 1 ? parts.shift().trim() : String(i + 1);
-    const name = parts.length ? parts.join(',').trim() : line;
+    const name = parts.length ? parts.join(', ').trim() : line;
     if (!bib || !name || bib.length > 12 || name.length > 60) throw new Error('Use a short bib and name, like 12, Alex.');
     if (bibs.has(bib.toLowerCase())) throw new Error(`Bib ${bib} is used twice.`);
     bibs.add(bib.toLowerCase());
-    return [`a${i + 1}`, { bib, name, order: i }];
+    return [`a${i + 1}`, { bib, name, order: i, ...(possibleGoal ? { goalMs: possibleGoal } : {}) }];
   }));
 }
 
 export function parseCheckpoints(text) {
-  const names = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-  if (!names.length || names.length > 12) throw new Error('Enter 1–12 checkpoints, in race order.');
-  if (names.some(x => x.length > 40)) throw new Error('Keep checkpoint labels under 40 characters.');
-  if (new Set(names.map(x => x.toLowerCase())).size !== names.length) throw new Error('Each checkpoint needs a different label.');
-  return Object.fromEntries(names.map((label, i) => [`c${i + 1}`, { label, order: i, finish: i === names.length - 1 }]));
+  const lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  if (!lines.length || lines.length > 12) throw new Error('Enter 1–12 checkpoints, in race order.');
+  const parsed = lines.map(line => {
+    const comma = line.lastIndexOf(',');
+    const distanceM = comma >= 0 ? parseDistance(line.slice(comma + 1)) : null;
+    const label = (distanceM ? line.slice(0, comma) : line).trim();
+    return { label, distanceM };
+  });
+  if (parsed.some(x => !x.label || x.label.length > 40)) throw new Error('Keep checkpoint labels under 40 characters.');
+  if (new Set(parsed.map(x => x.label.toLowerCase())).size !== parsed.length) throw new Error('Each checkpoint needs a different label.');
+  if (parsed.some(x => x.distanceM) && parsed.some(x => !x.distanceM)) throw new Error('Add a distance to every checkpoint, like Mile 1, 1 mi.');
+  if (parsed[0].distanceM && parsed.some((x, i) => i > 0 && x.distanceM <= parsed[i - 1].distanceM)) throw new Error('Checkpoint distances must increase from start to finish.');
+  return Object.fromEntries(parsed.map(({ label, distanceM }, i) => [`c${i + 1}`, { label, order: i, finish: i === parsed.length - 1, ...(distanceM ? { distanceM } : {}) }]));
 }
 
 export function ordered(map) { return Object.entries(map || {}).sort((a, b) => a[1].order - b[1].order); }
@@ -36,7 +71,7 @@ export function ordered(map) { return Object.entries(map || {}).sort((a, b) => a
 export const runNumber = room => room?.state?.run || 1;
 
 export function rosterText(athletes) {
-  return ordered(athletes).map(([, athlete]) => `${athlete.bib}, ${athlete.name}`).join('\n');
+  return ordered(athletes).map(([, athlete]) => `${athlete.bib}, ${athlete.name}${athlete.goalMs ? `, ${formatGoalTime(athlete.goalMs)}` : ''}`).join('\n');
 }
 
 export function parseRosterImport(text) {
@@ -66,15 +101,35 @@ export function parseRosterImport(text) {
   const nameIndex = headers.findIndex(x => ['name', 'athlete', 'athletename', 'student', 'studentname'].includes(x));
   const firstIndex = headers.findIndex(x => ['firstname', 'first'].includes(x));
   const lastIndex = headers.findIndex(x => ['lastname', 'last'].includes(x));
+  const goalIndex = headers.findIndex(x => ['goal', 'goaltime', 'goalfinishtime', 'finishtime', 'target', 'targettime'].includes(x));
   const hasHeader = nameIndex >= 0 || firstIndex >= 0 || lastIndex >= 0;
   const data = hasHeader ? records.slice(1) : records;
   const linesToParse = data.map((fields, i) => {
-    const name = hasHeader ? nameIndex >= 0 ? fields[nameIndex] : [fields[firstIndex] || '', fields[lastIndex] || ''].filter(Boolean).join(' ') : fields.slice(1).join(', ');
+    const possibleGoal = hasHeader ? fields[goalIndex] : fields.length > 2 && parseGoalTime(fields.at(-1)) ? fields.at(-1) : '';
+    const name = hasHeader ? nameIndex >= 0 ? fields[nameIndex] : [fields[firstIndex] || '', fields[lastIndex] || ''].filter(Boolean).join(' ') : fields.slice(1, possibleGoal ? -1 : undefined).join(', ');
     const bib = hasHeader ? bibIndex >= 0 ? fields[bibIndex] : String(i + 1) : fields[0];
     if (!bib || !name) throw new Error(`Roster row ${i + (hasHeader ? 2 : 1)} needs a bib and name.`);
-    return `${bib}, ${name}`;
+    if (possibleGoal && !parseGoalTime(possibleGoal)) throw new Error(`Roster row ${i + (hasHeader ? 2 : 1)} has an invalid goal time. Use minutes:seconds.`);
+    return `${bib}, ${name}${possibleGoal ? `, ${possibleGoal}` : ''}`;
   });
   return parseRoster(linesToParse.join('\n'));
+}
+
+export function paceComparison(room, athleteId, checkpointId, elapsedMs) {
+  const athlete = room?.athletes?.[athleteId], checkpoint = room?.checkpoints?.[checkpointId];
+  const finish = ordered(room?.checkpoints).at(-1)?.[1];
+  if (!athlete?.goalMs || !checkpoint?.distanceM || !finish?.distanceM || !Number.isFinite(elapsedMs)) return null;
+  const expectedMs = Math.round(athlete.goalMs * checkpoint.distanceM / finish.distanceM);
+  return { expectedMs, deltaMs: expectedMs - elapsedMs };
+}
+
+export function formatPaceDelta(deltaMs) {
+  if (!Number.isFinite(deltaMs)) return '—';
+  const sign = deltaMs >= 0 ? '+' : '−';
+  const tenths = Math.floor(Math.abs(deltaMs) / 100);
+  const seconds = Math.floor(tenths / 10) % 60;
+  const minutes = Math.floor(tenths / 600);
+  return `${sign}${minutes}:${String(seconds).padStart(2, '0')}.${tenths % 10}`;
 }
 
 export function selectSplits(room, pending = {}) {
@@ -127,7 +182,8 @@ export function leaderboard(room, checkpointId, pending = {}) {
     const split = cells[`${id}:${checkpointId}`];
     const previous = previousId ? cells[`${id}:${previousId}`] : null;
     const legMs = split && (!previousId || previous) ? split.elapsedMs - (previous?.elapsedMs || 0) : null;
-    return { id, ...athlete, split, legMs, backwards: legMs !== null && legMs < 0 };
+    const pace = split ? paceComparison(room, id, checkpointId, split.elapsedMs) : null;
+    return { id, ...athlete, split, legMs, pace, backwards: legMs !== null && legMs < 0 };
   });
   rows.sort((a, b) => (a.split?.elapsedMs ?? Infinity) - (b.split?.elapsedMs ?? Infinity) || a.order - b.order);
   let rank = 0, lastTime = -1;
@@ -144,14 +200,15 @@ export function csvCell(value) { return '"' + String(value ?? '').replaceAll('"'
 export function resultsCSV(room, pending = {}) {
   const cps = ordered(room.checkpoints);
   const cells = selectSplits(room, pending);
-  const head = ['Bib', 'Athlete', ...cps.flatMap(([, cp]) => [cp.label + ' elapsed', cp.label + ' leg', cp.label + ' status'])];
+  const head = ['Bib', 'Athlete', 'Goal finish', ...cps.flatMap(([, cp]) => [cp.label + ' elapsed', cp.label + ' vs goal', cp.label + ' leg', cp.label + ' status'])];
   const rows = ordered(room.athletes).map(([id, athlete]) => {
-    const values = [athlete.bib, athlete.name];
+    const values = [athlete.bib, athlete.name, athlete.goalMs ? formatGoalTime(athlete.goalMs) : ''];
     cps.forEach(([cpid], i) => {
       const split = cells[`${id}:${cpid}`];
       const prev = i ? cells[`${id}:${cps[i - 1][0]}`] : null;
       const leg = split && (!i || prev) ? split.elapsedMs - (prev?.elapsedMs || 0) : null;
-      values.push(split ? formatTime(split.elapsedMs) : '', leg === null ? '' : formatTime(leg), !split ? '' : split.failed ? 'UPLOAD FAILED' : split.pending ? 'PENDING' : split.clockQuality === 'cached' ? 'Saved; cached clock' : 'Saved');
+      const pace = split ? paceComparison(room, id, cpid, split.elapsedMs) : null;
+      values.push(split ? formatTime(split.elapsedMs) : '', pace ? formatPaceDelta(pace.deltaMs) : '', leg === null ? '' : formatTime(leg), !split ? '' : split.failed ? 'UPLOAD FAILED' : split.pending ? 'PENDING' : split.clockQuality === 'cached' ? 'Saved; cached clock' : 'Saved');
     });
     return values;
   });

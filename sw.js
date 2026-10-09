@@ -1,4 +1,4 @@
-const CACHE = 'splitline-v5';
+const CACHE = 'splitline-v6';
 const FILES = ['./', './index.html', './style.css', './app.mjs', './core.mjs', './backend.mjs', './firebase-config.mjs', './icon.svg', './manifest.webmanifest'];
 self.addEventListener('install', event => event.waitUntil(
   caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting())

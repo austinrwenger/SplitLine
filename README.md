@@ -10,12 +10,11 @@ Anonymous Authentication and the supplied database rules must be enabled in that
 project. Single-phone practice is also available. Test a shared race on two actual
 phones before using the app for a team race.
 
-**False-start resets require the updated `database.rules.json` in Firebase.**
-The app remains compatible with the previously published rules for creating,
-starting, timing, and ending a first attempt. To enable a reset for a shared
-race, open Firebase Console → Realtime Database → Rules, replace the editor
-with this repository's current `database.rules.json`, and publish it. Do this
-when no race is in progress.
+Keep Firebase Console → Realtime Database → Rules synchronized with this
+repository's current `database.rules.json`. The rules allow false-start attempt
+numbers, athlete goal times, and checkpoint distances while continuing to deny
+race listing and unauthorized writes. Publish rule changes only when no race is
+in progress.
 
 ## Publish on GitHub Pages
 
@@ -74,10 +73,14 @@ Firebase documentation:
 ## Race-day flow
 
 - The starter names a race, selects a saved roster or uploads a CSV/text roster,
-  and sets checkpoints in order. The last checkpoint is the finish. CSV can
-  have `Bib,Name` or `Bib Number,First Name,Last Name` columns. Imported and
+  and sets checkpoints in order. Add an optional goal finish time after each
+  athlete: `12, Alex, 18:30`. CSV can use `Bib,Name,Goal Time` or
+  `Bib Number,First Name,Last Name,Goal Time` columns. Imported and
   manually saved rosters stay in that phone's browser for future races; upload
   the file again on another starter device. Clearing site data erases them.
+- Enter every checkpoint as `name, distance`, for example `Mile 1, 1 mi`,
+  `Mile 2, 2 mi`, and `Finish, 5 km`. Miles, kilometers, meters, and yards are
+  accepted. The finish distance is the total race distance.
 - Share the private invite. The invite proves membership; its secret is in the
   URL fragment, not a query string. It is NOT a public spectator link.
 - Coaches enter their names, join while online, choose their checkpoint, and
@@ -92,7 +95,10 @@ Firebase documentation:
 - Tap an athlete as they pass. A recorded athlete cannot be tapped again
   accidentally; tapping the tile opens details. Undo the mistaken tap to retry.
 - Results are ranked at a selected checkpoint, not by whichever distance a runner
-  last passed. Missing prior checkpoints do not produce made-up leg times.
+  last passed. For athletes with goals, the Results view scales the goal finish
+  time to the selected checkpoint distance. A green `+` is time ahead of the
+  even goal pace; a red `−` is time behind. Missing prior checkpoints do not
+  produce made-up leg times. Goal comparison is also included in the CSV export.
 - Multiple coaches may record the same checkpoint. Conflicting taps are visible;
   the earliest non-undone event is selected deterministically. The original coach
   or starter may undo an incorrect event; raw events are never overwritten.
@@ -133,6 +139,8 @@ Firebase documentation:
 - Human taps, asymmetric network delay, mobile sleep, and phone clocks affect
   accuracy. This is a coaching tool, not photo-finish or certified competition
   timing. No sub-second synchronization guarantee is made.
+- Goal comparisons assume an even pace over the full course. Terrain, tactics,
+  and planned negative or positive splits are not modeled.
 - Screen Wake Lock is requested when supported, but the phone OS may decline it.
 - The service worker caches the app shell. Shared backend authentication may
   require reconnection after a reload. Cached races can still be recorded locally
