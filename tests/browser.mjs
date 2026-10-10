@@ -24,6 +24,7 @@ export async function connectBackend(){
     async join(id,token,name){return request('join',{id,token,name});},
     subscribe(id,callback,error){let active=true;let last='';const poll=async()=>{if(!active||!navigator.onLine)return;try{const room=await request('read',{id});const text=JSON.stringify(room);if(text!==last){last=text;callback(room);}}catch(e){if(navigator.onLine)error(e);}};const timer=setInterval(poll,150);poll();return()=>{active=false;clearInterval(timer);};},
     async presence(id,value){await request('presence',{id,value});},
+    async addAthlete(id,athleteId,athlete){return request('addAthlete',{id,athleteId,athlete});},
     async start(id,startedAt,run){return request('start',{id,startedAt,run});},
     async reset(id,run){return request('reset',{id,run});},
     async finish(id,endedAt){return request('finish',{id,endedAt});},
@@ -43,6 +44,7 @@ const server=http.createServer(async(req,res)=>{
       else{if(!room?.members?.[uid])throw new Error('Access denied');
         if(op==='read')value=room;
         if(op==='presence'){(room.presence||={})[uid]={...body.value,online:true,seenAt:Date.now()};}
+        if(op==='addAthlete'){assert.equal(room.owner,uid);assert.ok(!room.athletes[body.athleteId]);assert.notEqual(room.state.status,'finished');room.athletes[body.athleteId]=body.athlete;value=body.athlete;}
         if(op==='start'){assert.equal(room.owner,uid);assert.equal(room.state.status,'ready');assert.equal(room.state.run||1,body.run);room.state={...room.state,status:'running',startedAt:body.startedAt,endedAt:0};value=room.state;}
         if(op==='reset'){assert.equal(room.owner,uid);assert.equal(room.state.status,'running');assert.equal((room.state.run||1)+1,body.run);room.state={status:'ready',startedAt:0,endedAt:0,run:body.run};value=room.state;}
         if(op==='finish'){assert.equal(room.owner,uid);room.state={...room.state,status:'finished',endedAt:body.endedAt};}

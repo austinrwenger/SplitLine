@@ -85,6 +85,10 @@ Firebase documentation:
   URL fragment, not a query string. It is NOT a public spectator link.
 - Coaches enter their names, join while online, choose their checkpoint, and
   sync the clock. Check the **Crew** view before starting.
+- Before or during a race, the starter can use **＋ Add athlete** for anyone who
+  was missed. A bib, name, and optional goal finish time are added live to every
+  connected coach's timing list. Only the starter can add athletes; additions
+  stop when the race is finished, and the race limit remains 20 athletes.
 - The starter synchronizes the clock before the gun, then taps **Start at the
   gun**. The local clock starts at that tap with no countdown. Other phones
   receive the shared timestamp after the database confirms it. Network delay

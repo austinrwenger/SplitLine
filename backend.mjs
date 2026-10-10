@@ -62,6 +62,11 @@ export async function connectBackend(config) {
       await onDisconnect(path).set({ ...value, online: false, seenAt: serverTimestamp() });
       await set(path, { ...value, online: active, seenAt: serverTimestamp() });
     },
+    async addAthlete(id, athleteId, athlete) {
+      const result = await runTransaction(ref(db, `races/${id}/athletes/${athleteId}`), existing => existing ? undefined : athlete, { applyLocally: false });
+      if (!result.committed) throw new Error('That athlete slot was already used. Reload the race and try again.');
+      return result.snapshot.val();
+    },
     async start(id, startedAt, run) {
       const result = await runTransaction(ref(db, `races/${id}/state`), state => {
         if (!state || state.status !== 'ready' || (state.run || 1) !== run) return;

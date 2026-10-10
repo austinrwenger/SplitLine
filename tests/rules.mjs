@@ -27,11 +27,15 @@ try{
   await denied('wrong invite',coach.ref(base+'/members/coach').set({name:'Mile Coach',invite:'b'.repeat(32)}));
   await ok('private invite grants membership',coach.ref(base+'/members/coach').set({name:'Mile Coach',invite:token}));
   await ok('member reads race',coach.ref(base).once('value'));
+  await denied('coach cannot add athlete',coach.ref(base+'/athletes/a3').set({bib:'36',name:'Sam',order:2,goalMs:1200000}));
+  await ok('starter adds athlete before start',host.ref(base+'/athletes/a3').set({bib:'36',name:'Sam',order:2,goalMs:1200000}));
+  await denied('starter cannot overwrite athlete',host.ref(base+'/athletes/a1/name').set('Changed'));
   const startedAt=Date.now()+2000;
   const state={status:'running',startedAt,endedAt:0};
   await denied('coach cannot start',coach.ref(base+'/state').set(state));
   await denied('host cannot transfer ownership',host.ref(base+'/owner').set('coach'));
   await ok('creator starts race',host.ref(base+'/state').set(state));
+  await ok('starter adds athlete during race',host.ref(base+'/athletes/a4').set({bib:'48',name:'Casey',order:3}));
   await denied('cannot reset without advancing attempt',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0,run:1}));
   const e={athleteId:'a1',checkpointId:'c1',elapsedMs:1000,capturedAt:startedAt+1000,coachId:'coach',coachName:'Mile Coach',clockQuality:'synced'};
   await ok('member creates valid split',coach.ref(base+'/events/e1').set(e));
@@ -57,6 +61,7 @@ try{
   await ok('coach records in new attempt',coach.ref(base+'/events/e3').set(nextEvent));
   const endedAt=nextStart+5000;
   await ok('creator ends race',host.ref(base+'/state').set({status:'finished',startedAt:nextStart,endedAt,run:2}));
+  await denied('starter cannot add athlete after finish',host.ref(base+'/athletes/a5').set({bib:'60',name:'Taylor',order:4}));
   await ok('previously captured offline event may upload after finish',coach.ref(base+'/events/e4').set({...nextEvent,clockQuality:'cached'}));
   await denied('new capture far after finish',coach.ref(base+'/events/e5').set({...nextEvent,capturedAt:endedAt+6000,elapsedMs:11000}));
   await denied('finished race cannot be reset',host.ref(base+'/state').set({status:'ready',startedAt:0,endedAt:0,run:3}));

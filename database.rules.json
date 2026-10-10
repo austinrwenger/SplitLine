@@ -40,6 +40,7 @@
         "athletes": {
           ".validate": "newData.hasChildren(['a1'])",
           "$athlete": {
+            ".write": "auth !== null && !data.exists() && root.child('races').child($race).child('owner').val() === auth.uid && (root.child('races').child($race).child('state/status').val() === 'ready' || root.child('races').child($race).child('state/status').val() === 'running')",
             ".validate": "$athlete.matches(/^a([1-9]|1[0-9]|20)$/) && newData.hasChildren(['bib','name','order'])",
             "bib": {
               ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12"
