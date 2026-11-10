@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#203447">
+  <title>First Aid Question Picker</title>
+  <style>
+    :root {
+      --navy: #203447;
+      --navy-deep: #172838;
+      --orange: #df7b12;
+      --orange-dark: #b85f07;
+      --cream: #f8f6f0;
+      --ink: #203447;
+      --muted: #667783;
+      --gray: #d9e0e5;
+      --green: #4e9f73;
+      --white: #ffffff;
+      --shadow: 0 24px 70px rgba(12, 29, 43, .24);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(255,255,255,.08), transparent 30%),
+        linear-gradient(145deg, var(--navy-deep), var(--navy));
+      color: var(--white);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    button { font: inherit; }
+
+    .app {
+      width: min(1180px, calc(100% - 32px));
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 30px 0 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .eyebrow {
+      margin: 0 0 4px;
+      color: #ffd18f;
+      font-size: .76rem;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.45rem, 3vw, 2.35rem);
+      line-height: 1.05;
+      letter-spacing: -.035em;
+    }
+
+    .progress {
+      min-width: 170px;
+      padding: 12px 16px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      text-align: center;
+      font-size: .86rem;
+      font-weight: 800;
+      letter-spacing: .04em;
+      white-space: nowrap;
+    }
+
+    .card {
+      flex: 1;
+      min-height: 430px;
+      padding: clamp(28px, 5vw, 64px);
+      border-radius: 24px;
+      background: var(--cream);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 8px;
+      background: var(--orange);
+    }
+
+    .card-content { width: min(930px, 100%); }
+
+    .category {
+      margin: 0 0 22px;
+      color: var(--orange-dark);
+      font-size: clamp(.88rem, 1.8vw, 1.08rem);
+      font-weight: 900;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+
+    .question {
+      margin: 0;
+      font-size: clamp(2rem, 5.2vw, 4.8rem);
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: -.045em;
+      text-wrap: balance;
+    }
+
+    .question.long { font-size: clamp(1.75rem, 4.3vw, 3.85rem); }
+
+    .hint {
+      margin: 28px 0 0;
+      color: var(--muted);
+      font-size: clamp(.88rem, 1.5vw, 1rem);
+      line-height: 1.45;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto auto;
+      gap: 12px;
+    }
+
+    .button {
+      min-height: 58px;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 20px;
+      cursor: pointer;
+      font-weight: 900;
+      letter-spacing: .02em;
+      transition: transform .12s ease, filter .12s ease, background .12s ease;
+    }
+
+    .button:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.04); }
+    .button:active:not(:disabled) { transform: translateY(0); }
+    .button:focus-visible { outline: 4px solid #ffd18f; outline-offset: 3px; }
+    .button:disabled { cursor: default; opacity: .55; }
+
+    .primary { background: var(--orange); color: var(--white); font-size: 1.06rem; }
+    .secondary { background: rgba(255,255,255,.12); color: var(--white); border: 1px solid rgba(255,255,255,.28); }
+
+    .tracker-panel {
+      padding: 16px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 16px;
+      background: rgba(255,255,255,.07);
+    }
+
+    .tracker-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 11px;
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .remaining { color: #c9d4dc; letter-spacing: 0; text-transform: none; }
+
+    .trackers {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 9px;
+    }
+
+    .tracker {
+      min-height: 44px;
+      padding: 9px 10px;
+      border-radius: 9px;
+      background: var(--gray);
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font-size: .76rem;
+      font-weight: 900;
+      line-height: 1.15;
+      transition: background .2s ease, color .2s ease, transform .2s ease;
+    }
+
+    .tracker.done {
+      background: var(--green);
+      color: var(--white);
+      transform: translateY(-2px);
+    }
+
+    .status {
+      min-height: 22px;
+      margin: 0;
+      color: #c9d4dc;
+      text-align: center;
+      font-size: .88rem;
+    }
+
+    @media (max-width: 760px) {
+      .app { width: min(100% - 20px, 1180px); padding-top: 18px; }
+      header { align-items: flex-start; }
+      .progress { min-width: auto; padding: 9px 12px; font-size: .72rem; }
+      .card { min-height: 390px; border-radius: 18px; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      .primary { grid-column: 1 / -1; }
+      .trackers { grid-template-columns: repeat(2, 1fr); }
+      .tracker:last-child { grid-column: 1 / -1; }
+    }
+
+    @media (max-height: 720px) and (min-width: 761px) {
+      .app { padding-top: 16px; gap: 12px; }
+      .card { min-height: 320px; padding: 32px; }
+      .question { font-size: clamp(2rem, 4.7vw, 4rem); }
+      .hint { margin-top: 18px; }
+      .button { min-height: 50px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <p class="eyebrow">Check · Call · Care</p>
+        <h1>First Aid Question Picker</h1>
+      </div>
+      <div id="progress" class="progress" aria-live="polite">0 OF 5 CATEGORIES</div>
+    </header>
+
+    <section class="card" aria-labelledby="category question">
+      <div class="card-content">
+        <p id="category" class="category">Ready</p>
+        <p id="question" class="question">Press the button to draw the first question.</p>
+        <p id="hint" class="hint">Questions will not repeat. The round ends after all five categories have appeared.</p>
+      </div>
+    </section>
+
+    <div class="controls">
+      <button id="draw" class="button primary" type="button">PICK A QUESTION</button>
+      <button id="fullscreen" class="button secondary" type="button">FULL SCREEN</button>
+      <button id="reset" class="button secondary" type="button">RESET</button>
+    </div>
+
+    <section class="tracker-panel" aria-label="Category progress">
+      <div class="tracker-heading">
+        <span>Categories picked</span>
+        <span id="remaining" class="remaining">36 questions available</span>
+      </div>
+      <div id="trackers" class="trackers"></div>
+    </section>
+
+    <p id="status" class="status" aria-live="polite">Ready for a new round.</p>
+  </main>
+
+  <script>
+    const QUESTIONS = [
+      { id: 'general-1', category: 'General First Aid', text: 'What should a responder check before approaching an injured or ill person?' },
+      { id: 'general-2', category: 'General First Aid', text: 'If the person appears unresponsive, what four life-threatening conditions should be checked?' },
+      { id: 'general-3', category: 'General First Aid', text: 'How long should the initial check take?' },
+      { id: 'general-4', category: 'General First Aid', text: 'What conditions mean the responder should call 911 and get equipment immediately?' },
+      { id: 'general-5', category: 'General First Aid', text: 'What should the responder do if the person is responsive, fully awake, and does not appear to have a life-threatening condition?' },
+      { id: 'general-6', category: 'General First Aid', text: 'What information is included in the SAM interview?' },
+      { id: 'general-7', category: 'General First Aid', text: 'What warning does the page give about moving a person or an injured body part?' },
+      { id: 'burns-1', category: 'Burns', text: 'What are four possible causes of burns?' },
+      { id: 'burns-2', category: 'Burns', text: 'List three burn signs or locations that require immediate medical treatment.' },
+      { id: 'burns-3', category: 'Burns', text: 'When should a responder call 911 for a burn?' },
+      { id: 'burns-4', category: 'Burns', text: 'How should a thermal burn be cooled, and for how long?' },
+      { id: 'burns-5', category: 'Burns', text: 'What should happen to clothing or jewelry near the burn?' },
+      { id: 'burns-6', category: 'Burns', text: 'Why should a responder avoid ice and greasy substances such as butter?' },
+      { id: 'burns-7', category: 'Burns', text: 'What is one common burn-care mistake your group would warn classmates against?' },
+      { id: 'seizures-1', category: 'Seizures', text: 'What are two different ways a seizure may appear?' },
+      { id: 'seizures-2', category: 'Seizures', text: 'What should a responder do to prevent injury during a seizure?' },
+      { id: 'seizures-3', category: 'Seizures', text: 'Under what conditions should someone call 911?' },
+      { id: 'seizures-4', category: 'Seizures', text: 'When should the person be placed on their side?' },
+      { id: 'seizures-5', category: 'Seizures', text: 'What should the responder check after the movements stop?' },
+      { id: 'seizures-6', category: 'Seizures', text: 'Why should the responder not restrain the person?' },
+      { id: 'seizures-7', category: 'Seizures', text: 'Why should nothing be placed in the person\u2019s mouth?' },
+      { id: 'fractures-1', category: 'Fractures', text: 'What is the difference between an open fracture and a closed fracture?' },
+      { id: 'fractures-2', category: 'Fractures', text: 'Why does the Red Cross recommend treating all muscle, bone, and joint injuries as possible fractures?' },
+      { id: 'fractures-3', category: 'Fractures', text: 'List three signs that require immediate medical treatment.' },
+      { id: 'fractures-4', category: 'Fractures', text: 'When should a responder call 911 for a possible fracture?' },
+      { id: 'fractures-5', category: 'Fractures', text: 'What should the responder do with the injured body part?' },
+      { id: 'fractures-6', category: 'Fractures', text: 'How should a cold pack be used on a closed injury?' },
+      { id: 'fractures-7', category: 'Fractures', text: 'What are two actions a responder should avoid?' },
+      { id: 'bleeding-1', category: 'External Bleeding', text: 'How can the amount and flow of blood show that bleeding is life-threatening?' },
+      { id: 'bleeding-2', category: 'External Bleeding', text: 'What safety steps should the responder take before providing care?' },
+      { id: 'bleeding-3', category: 'External Bleeding', text: 'When should someone call 911 and get equipment?' },
+      { id: 'bleeding-4', category: 'External Bleeding', text: 'Describe the steps for applying direct pressure.' },
+      { id: 'bleeding-5', category: 'External Bleeding', text: 'How long should direct pressure be maintained?' },
+      { id: 'bleeding-6', category: 'External Bleeding', text: 'What should the responder do if blood soaks through the original dressing?' },
+      { id: 'bleeding-7', category: 'External Bleeding', text: 'What should the responder do if an object is embedded in the wound?' },
+      { id: 'bleeding-8', category: 'External Bleeding', text: 'List two signs that the person may be developing shock.' }
+    ];
+
+    const CATEGORIES = ['General First Aid', 'Burns', 'Seizures', 'Fractures', 'External Bleeding'];
+    const STORAGE_KEY = 'firstAidQuestionPickerStateV1';
+    const elements = {
+      category: document.getElementById('category'),
+      question: document.getElementById('question'),
+      hint: document.getElementById('hint'),
+      progress: document.getElementById('progress'),
+      remaining: document.getElementById('remaining'),
+      trackers: document.getElementById('trackers'),
+      status: document.getElementById('status'),
+      draw: document.getElementById('draw'),
+      reset: document.getElementById('reset'),
+      fullscreen: document.getElementById('fullscreen')
+    };
+
+    let state = loadState();
+
+    function emptyState() {
+      return { usedIds: [], seenCategories: [], currentId: null };
+    }
+
+    function loadState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        if (!saved || !Array.isArray(saved.usedIds) || !Array.isArray(saved.seenCategories)) return emptyState();
+        const validIds = new Set(QUESTIONS.map(question => question.id));
+        return {
+          usedIds: saved.usedIds.filter(id => validIds.has(id)),
+          seenCategories: saved.seenCategories.filter(category => CATEGORIES.includes(category)),
+          currentId: validIds.has(saved.currentId) ? saved.currentId : null
+        };
+      } catch (error) {
+        return emptyState();
+      }
+    }
+
+    function saveState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function randomIndex(max) {
+      if (window.crypto && window.crypto.getRandomValues) {
+        const limit = Math.floor(0x100000000 / max) * max;
+        const value = new Uint32Array(1);
+        do window.crypto.getRandomValues(value); while (value[0] >= limit);
+        return value[0] % max;
+      }
+      return Math.floor(Math.random() * max);
+    }
+
+    function drawQuestion() {
+      if (state.seenCategories.length === CATEGORIES.length) return;
+      const remaining = QUESTIONS.filter(question => !state.usedIds.includes(question.id));
+      if (!remaining.length) return;
+      const selected = remaining[randomIndex(remaining.length)];
+      state.usedIds.push(selected.id);
+      state.currentId = selected.id;
+      if (!state.seenCategories.includes(selected.category)) state.seenCategories.push(selected.category);
+      saveState();
+      render();
+    }
+
+    function resetRound() {
+      if (state.usedIds.length && !window.confirm('Reset this round and return all questions to the deck?')) return;
+      state = emptyState();
+      saveState();
+      render();
+      elements.status.textContent = 'Ready for a new round.';
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.();
+      } else {
+        document.exitFullscreen?.();
+      }
+    }
+
+    function render() {
+      const current = QUESTIONS.find(question => question.id === state.currentId) || null;
+      const complete = state.seenCategories.length === CATEGORIES.length;
+      const remainingCount = QUESTIONS.length - state.usedIds.length;
+
+      elements.progress.textContent = `${state.seenCategories.length} OF 5 CATEGORIES`;
+      elements.remaining.textContent = `${remainingCount} question${remainingCount === 1 ? '' : 's'} remaining`;
+      elements.draw.disabled = complete;
+      elements.draw.textContent = complete ? 'ROUND COMPLETE' : 'PICK A QUESTION';
+
+      if (current) {
+        elements.category.textContent = current.category;
+        elements.question.textContent = current.text;
+        elements.question.classList.toggle('long', current.text.length > 96);
+        elements.hint.textContent = complete
+          ? 'All five categories have appeared. Reset when you are ready for another round.'
+          : 'Discuss the question, then draw another card.';
+        elements.status.textContent = complete
+          ? `Round complete after ${state.usedIds.length} question${state.usedIds.length === 1 ? '' : 's'}.`
+          : `Question ${state.usedIds.length} drawn. No repeats this round.`;
+      } else {
+        elements.category.textContent = 'Ready';
+        elements.question.textContent = 'Press the button to draw the first question.';
+        elements.question.classList.remove('long');
+        elements.hint.textContent = 'Questions will not repeat. The round ends after all five categories have appeared.';
+      }
+
+      elements.trackers.innerHTML = '';
+      CATEGORIES.forEach(category => {
+        const tracker = document.createElement('div');
+        const done = state.seenCategories.includes(category);
+        tracker.className = `tracker${done ? ' done' : ''}`;
+        tracker.textContent = done ? `✓ ${category}` : category;
+        elements.trackers.appendChild(tracker);
+      });
+    }
+
+    elements.draw.addEventListener('click', drawQuestion);
+    elements.reset.addEventListener('click', resetRound);
+    elements.fullscreen.addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', () => {
+      elements.fullscreen.textContent = document.fullscreenElement ? 'EXIT FULL SCREEN' : 'FULL SCREEN';
+    });
+    document.addEventListener('keydown', event => {
+      if ((event.code === 'Space' || event.code === 'Enter') && event.target === document.body) {
+        event.preventDefault();
+        drawQuestion();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
