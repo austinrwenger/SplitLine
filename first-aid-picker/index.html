@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#203447">
-  <title>First Aid Question Picker</title>
+  <title>Social Media Discussion Picker</title>
   <style>
     :root {
       --navy: #203447;
@@ -241,8 +241,8 @@
   <main class="app">
     <header>
       <div>
-        <p class="eyebrow">Check · Call · Care</p>
-        <h1>First Aid Question Picker</h1>
+        <p class="eyebrow">Social Media Basics</p>
+        <h1>Social Media Discussion Picker</h1>
       </div>
       <div id="progress" class="progress" aria-live="polite">0 OF 5 CATEGORIES</div>
     </header>
@@ -264,7 +264,7 @@
     <section class="tracker-panel" aria-label="Category progress">
       <div class="tracker-heading">
         <span>Categories picked</span>
-        <span id="remaining" class="remaining">36 questions available</span>
+        <span id="remaining" class="remaining">16 questions available</span>
       </div>
       <div id="trackers" class="trackers"></div>
     </section>
@@ -274,46 +274,26 @@
 
   <script>
     const QUESTIONS = [
-      { id: 'general-1', category: 'General First Aid', text: 'What should a responder check before approaching an injured or ill person?' },
-      { id: 'general-2', category: 'General First Aid', text: 'If the person appears unresponsive, what four life-threatening conditions should be checked?' },
-      { id: 'general-3', category: 'General First Aid', text: 'How long should the initial check take?' },
-      { id: 'general-4', category: 'General First Aid', text: 'What conditions mean the responder should call 911 and get equipment immediately?' },
-      { id: 'general-5', category: 'General First Aid', text: 'What should the responder do if the person is responsive, fully awake, and does not appear to have a life-threatening condition?' },
-      { id: 'general-6', category: 'General First Aid', text: 'What information is included in the SAM interview?' },
-      { id: 'general-7', category: 'General First Aid', text: 'What warning does the page give about moving a person or an injured body part?' },
-      { id: 'burns-1', category: 'Burns', text: 'What are four possible causes of burns?' },
-      { id: 'burns-2', category: 'Burns', text: 'List three burn signs or locations that require immediate medical treatment.' },
-      { id: 'burns-3', category: 'Burns', text: 'When should a responder call 911 for a burn?' },
-      { id: 'burns-4', category: 'Burns', text: 'How should a thermal burn be cooled, and for how long?' },
-      { id: 'burns-5', category: 'Burns', text: 'What should happen to clothing or jewelry near the burn?' },
-      { id: 'burns-6', category: 'Burns', text: 'Why should a responder avoid ice and greasy substances such as butter?' },
-      { id: 'burns-7', category: 'Burns', text: 'What is one common burn-care mistake your group would warn classmates against?' },
-      { id: 'seizures-1', category: 'Seizures', text: 'What are two different ways a seizure may appear?' },
-      { id: 'seizures-2', category: 'Seizures', text: 'What should a responder do to prevent injury during a seizure?' },
-      { id: 'seizures-3', category: 'Seizures', text: 'Under what conditions should someone call 911?' },
-      { id: 'seizures-4', category: 'Seizures', text: 'When should the person be placed on their side?' },
-      { id: 'seizures-5', category: 'Seizures', text: 'What should the responder check after the movements stop?' },
-      { id: 'seizures-6', category: 'Seizures', text: 'Why should the responder not restrain the person?' },
-      { id: 'seizures-7', category: 'Seizures', text: 'Why should nothing be placed in the person\u2019s mouth?' },
-      { id: 'fractures-1', category: 'Fractures', text: 'What is the difference between an open fracture and a closed fracture?' },
-      { id: 'fractures-2', category: 'Fractures', text: 'Why does the Red Cross recommend treating all muscle, bone, and joint injuries as possible fractures?' },
-      { id: 'fractures-3', category: 'Fractures', text: 'List three signs that require immediate medical treatment.' },
-      { id: 'fractures-4', category: 'Fractures', text: 'When should a responder call 911 for a possible fracture?' },
-      { id: 'fractures-5', category: 'Fractures', text: 'What should the responder do with the injured body part?' },
-      { id: 'fractures-6', category: 'Fractures', text: 'How should a cold pack be used on a closed injury?' },
-      { id: 'fractures-7', category: 'Fractures', text: 'What are two actions a responder should avoid?' },
-      { id: 'bleeding-1', category: 'External Bleeding', text: 'How can the amount and flow of blood show that bleeding is life-threatening?' },
-      { id: 'bleeding-2', category: 'External Bleeding', text: 'What safety steps should the responder take before providing care?' },
-      { id: 'bleeding-3', category: 'External Bleeding', text: 'When should someone call 911 and get equipment?' },
-      { id: 'bleeding-4', category: 'External Bleeding', text: 'Describe the steps for applying direct pressure.' },
-      { id: 'bleeding-5', category: 'External Bleeding', text: 'How long should direct pressure be maintained?' },
-      { id: 'bleeding-6', category: 'External Bleeding', text: 'What should the responder do if blood soaks through the original dressing?' },
-      { id: 'bleeding-7', category: 'External Bleeding', text: 'What should the responder do if an object is embedded in the wound?' },
-      { id: 'bleeding-8', category: 'External Bleeding', text: 'List two signs that the person may be developing shock.' }
+      { id: 'career-1', category: 'Career', text: 'Who is your favorite content creator/influencer? What is their channel about?' },
+      { id: 'career-2', category: 'Career', text: 'If you could make money as a content creator/influencer, what would your channel be about?' },
+      { id: 'career-3', category: 'Career', text: 'How do you think content creators/influencers make money? Do you think it\u2019s enough to live off of?' },
+      { id: 'education-1', category: 'Education', text: 'What\u2019s the most interesting thing you\u2019ve ever learned from a social media post?' },
+      { id: 'education-2', category: 'Education', text: 'If you need help learning about a topic or how to do something, what social media site do you search?' },
+      { id: 'education-3', category: 'Education', text: 'What type of social media posts are best for learning new concepts and skills?' },
+      { id: 'entertainment-1', category: 'Entertainment', text: 'What social media platform is the most entertaining for you?' },
+      { id: 'entertainment-2', category: 'Entertainment', text: 'What type of social media content is most entertaining for you?' },
+      { id: 'entertainment-3', category: 'Entertainment', text: 'Do you ever get on social media because you\u2019re bored, lonely, or sad? If so, does social media provide relief?' },
+      { id: 'entertainment-4', category: 'Entertainment', text: 'Do you ever try to dissociate from your stress by scrolling through social media?' },
+      { id: 'marketing-1', category: 'Marketing/Branding', text: 'What companies have worked with your favorite content creators/influencers?' },
+      { id: 'marketing-2', category: 'Marketing/Branding', text: 'Do you think social media is effective marketing/branding for companies?' },
+      { id: 'marketing-3', category: 'Marketing/Branding', text: 'What companies have you seen on social media?' },
+      { id: 'socialization-1', category: 'Socialization', text: 'What can social media do that face-to-face socializing cannot?' },
+      { id: 'socialization-2', category: 'Socialization', text: 'How can you safely engage with people you connect with on social media?' },
+      { id: 'socialization-3', category: 'Socialization', text: 'What social media platform is best for connecting with others?' }
     ];
 
-    const CATEGORIES = ['General First Aid', 'Burns', 'Seizures', 'Fractures', 'External Bleeding'];
-    const STORAGE_KEY = 'firstAidQuestionPickerStateV1';
+    const CATEGORIES = ['Career', 'Education', 'Entertainment', 'Marketing/Branding', 'Socialization'];
+    const STORAGE_KEY = 'socialMediaDiscussionPickerStateV1';
     const elements = {
       category: document.getElementById('category'),
       question: document.getElementById('question'),
